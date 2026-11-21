@@ -1,0 +1,46 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CefSharp.WinForms.NETCore" Version="152.0.100" />
+    <PackageReference Include="chromiumembeddedframework.runtime.win-x64" Version="152.0.10" />
+    <PackageReference Include="Markdig" Version="1.4.0" />
+  </ItemGroup>
+
+  <Target Name="KeepEnglishCefLocale" BeforeTargets="GetCopyToPublishDirectoryItems;AssignTargetPaths">
+    <ItemGroup>
+      <Content Remove="@(Content)" Condition="$([System.String]::Copy('%(Link)').StartsWith('locales\')) and '%(Filename)' != 'en-US'" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="CopyCefRuntime" AfterTargets="Build">
+    <CallTarget Targets="CefRedist64CopyResources" />
+  </Target>
+
+  <Target Name="CopyCefRuntimePublish" AfterTargets="Publish" Condition="'$(PublishSingleFile)' != 'true'">
+    <PropertyGroup>
+      <CefRedist64TargetDir>$(PublishDir)</CefRedist64TargetDir>
+    </PropertyGroup>
+    <CallTarget Targets="CefRedist64CopyResources" />
+  </Target>
+
+</Project>
