@@ -728,8 +728,6 @@ internal static class RichMarkdown {
             caret = Math.Clamp(caret, 0, actual.Length);
             if (Same(actual))
                 return caret >= _slots.Count ? markdownLength : _slots[caret].Index;
-            if (VisibleSame(actual))
-                return VisibleSource(caret, markdownLength);
             var slot = Align(actual, caret);
             if (caret >= actual.Length || slot >= _slots.Count)
                 return markdownLength;
@@ -758,49 +756,7 @@ internal static class RichMarkdown {
 
             if (Same(actual))
                 return Math.Min(predicted, actual.Length);
-            if (VisibleSame(actual))
-                return Math.Min(VisibleIndex(predicted), actual.Length);
             return MapPredicted(actual, predicted);
-        }
-
-        private int VisibleIndex(int slotIndex) {
-            var count = 0;
-            for (var i = 0; i < slotIndex && i < _slots.Count; i++)
-                if (!_slots[i].Hidden)
-                    count++;
-            return count;
-        }
-
-        private int VisibleSource(int caret, int markdownLength) {
-            var seen = 0;
-            foreach (var slot in _slots) {
-                if (slot.Hidden)
-                    continue;
-                if (seen == caret)
-                    return slot.Index;
-                seen++;
-            }
-
-            return markdownLength;
-        }
-
-        private bool VisibleSame(string actual) {
-            var count = 0;
-            foreach (var slot in _slots)
-                if (!slot.Hidden)
-                    count++;
-            if (count != actual.Length)
-                return false;
-            var i = 0;
-            foreach (var slot in _slots) {
-                if (slot.Hidden)
-                    continue;
-                if (actual[i] != slot.Char)
-                    return false;
-                i++;
-            }
-
-            return true;
         }
 
         private int LastSlotOnLine(int before, int line) {

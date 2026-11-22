@@ -360,7 +360,9 @@ public partial class FormMain : Form {
 
     private void PlacePreviewCaret(int markdownCaret) {
         var samePlace = _keptPreviewCaret >= 0 && markdownCaret == _keptMarkdownCaret;
-        var caret = RichMarkdown.ControlCaret(rtbPreview.Text, markdownCaret);
+        var caret = samePlace
+            ? _keptPreviewCaret
+            : RichMarkdown.ControlCaret(rtbPreview.Text, markdownCaret);
         _suppress = true;
         try {
             rtbPreview.Focus();
