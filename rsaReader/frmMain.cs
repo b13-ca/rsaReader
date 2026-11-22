@@ -19,6 +19,9 @@ public partial class FormMain : Form {
     private bool _realEdited;
     private string _shownRtf = "";
     private bool _openAsReal;
+    private int _keptPreviewCaret = -1;
+    private int _keptMarkdownCaret = -1;
+    private Point _keptPreviewScroll;
     private bool _dark;
     private readonly List<TitleMark> _titleMarks = new();
     private bool _drawingTitles;
@@ -317,17 +320,68 @@ public partial class FormMain : Form {
         _openAsReal = true;
         _markdown = Normalize(markdown);
         _savedText = _markdown;
+        _keptPreviewCaret = -1;
         _documentPath = path;
         btnSave.Enabled = false;
         Text = "rsaReader - " + Path.GetFileName(path);
     }
 
     private void btnMode_Click(object sender, EventArgs e) {
+        var text = rtbPreview.Text ?? "";
+        var start = Math.Clamp(rtbPreview.SelectionStart, 0, text.Length);
+        var scroll = Point.Empty;
+        if (rtbPreview.IsHandleCreated)
+            SendMessage(rtbPreview.Handle, 0x04DD, IntPtr.Zero, ref scroll);
         CaptureMarkdown();
-        if (_mode == ViewMode.Edit)
+        if (_mode == ViewMode.Edit) {
             ShowReal();
-        else
-            ShowEditor();
+            PlacePreviewCaret(PlainIndex(text, start));
+            return;
+        }
+
+        var markdownCaret = SnapMarkers(_markdown, RichMarkdown.SourceIndex(text, start, _markdown.Length));
+        _keptPreviewCaret = start;
+        _keptMarkdownCaret = markdownCaret;
+        _keptPreviewScroll = scroll;
+        ShowEditor();
+        PlaceEditCaret(markdownCaret);
+    }
+
+    private void PlaceEditCaret(int markdownCaret) {
+        _suppress = true;
+        try {
+            rtbPreview.Focus();
+            rtbPreview.Select(Math.Clamp(markdownCaret, 0, rtbPreview.TextLength), 0);
+        }
+        finally {
+            _suppress = false;
+        }
+    }
+
+    private void PlacePreviewCaret(int markdownCaret) {
+        var samePlace = _keptPreviewCaret >= 0 && markdownCaret == _keptMarkdownCaret;
+        var caret = samePlace
+            ? _keptPreviewCaret
+            : RichMarkdown.ControlCaret(rtbPreview.Text, markdownCaret);
+        _suppress = true;
+        try {
+            rtbPreview.Focus();
+            rtbPreview.Select(Math.Clamp(caret, 0, rtbPreview.TextLength), 0);
+            if (samePlace && rtbPreview.IsHandleCreated)
+                SendMessage(rtbPreview.Handle, 0x04DE, IntPtr.Zero, ref _keptPreviewScroll);
+        }
+        finally {
+            _suppress = false;
+        }
+    }
+
+    private static int PlainIndex(string text, int index) {
+        index = Math.Clamp(index, 0, text.Length);
+        var plain = 0;
+        for (var i = 0; i < index; i++)
+            if (text[i] != '\r')
+                plain++;
+        return plain;
     }
 
     private void ShowEditor() {
@@ -440,6 +494,8 @@ public partial class FormMain : Form {
             _markdown = Normalize(RichMarkdown.FromRtf(rtbPreview.Rtf));
         var from = RichMarkdown.SourceIndex(text, start, _markdown.Length);
         var to = end == start ? from : RichMarkdown.SourceIndex(text, end, _markdown.Length);
+        from = SnapMarkers(_markdown, from);
+        to = SnapMarkers(_markdown, to);
         if (to < from)
             (from, to) = (to, from);
         from = Math.Clamp(from, 0, _markdown.Length);
@@ -449,6 +505,9 @@ public partial class FormMain : Form {
     }
 
     private void ReloadPreview(string before, int start, int end) {
+        var scroll = Point.Empty;
+        if (rtbPreview.IsHandleCreated)
+            SendMessage(rtbPreview.Handle, 0x04DD, IntPtr.Zero, ref scroll);
         _live = false;
         _realEdited = false;
         _titleMarks.Clear();
@@ -462,11 +521,13 @@ public partial class FormMain : Form {
         CollectTitleRules();
         var after = rtbPreview.Text ?? "";
         var caret = CaretAfterInsert(before, after, start, end);
+        caret = RetreatOutsideMarkers(after, caret);
         _suppress = true;
         try {
             rtbPreview.Focus();
             rtbPreview.Select(Math.Clamp(caret, 0, rtbPreview.TextLength), 0);
-            rtbPreview.ScrollToCaret();
+            if (rtbPreview.IsHandleCreated)
+                SendMessage(rtbPreview.Handle, 0x04DE, IntPtr.Zero, ref scroll);
         }
         finally {
             _suppress = false;
@@ -493,6 +554,54 @@ public partial class FormMain : Form {
         if (caret < prefix)
             caret = prefix;
         return Math.Clamp(caret, 0, after.Length);
+    }
+
+    private int RetreatOutsideMarkers(string preview, int caret) {
+        caret = Math.Clamp(caret, 0, preview.Length);
+        var snapped = SnapMarkers(_markdown, RichMarkdown.SourceIndex(preview, caret, _markdown.Length));
+        while (caret > 0) {
+            var at = RichMarkdown.SourceIndex(preview, caret, _markdown.Length);
+            if (SnapMarkers(_markdown, at) == at && at <= snapped)
+                return caret;
+            caret--;
+        }
+
+        return 0;
+    }
+
+    private static int SnapMarkers(string markdown, int index) {
+        index = Math.Clamp(index, 0, markdown.Length);
+        var lineStart = index == 0 ? 0 : markdown.LastIndexOf('\n', index - 1) + 1;
+        var lineEnd = markdown.IndexOf('\n', index);
+        if (lineEnd < 0)
+            lineEnd = markdown.Length;
+        var line = markdown[lineStart..lineEnd];
+        var local = index - lineStart;
+        local = SnapPair(line, local, "**");
+        local = SnapPair(line, local, "__");
+        local = SnapPair(line, local, "~~");
+        return lineStart + local;
+    }
+
+    private static int SnapPair(string line, int index, string mark) {
+        var search = 0;
+        while (search < line.Length) {
+            var open = line.IndexOf(mark, search, StringComparison.Ordinal);
+            if (open < 0 || open >= index)
+                return index;
+            var close = line.IndexOf(mark, open + mark.Length, StringComparison.Ordinal);
+            if (close < 0)
+                return index;
+            var end = close + mark.Length;
+            if (index >= end) {
+                search = end;
+                continue;
+            }
+
+            return index - open <= end - index ? open : end;
+        }
+
+        return index;
     }
 
     private void RunButton(Action action) {
