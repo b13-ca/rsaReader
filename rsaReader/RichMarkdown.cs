@@ -32,7 +32,7 @@ internal static class RichMarkdown {
     }
 
     private static string BuildRtf(string? markdown, bool dark) {
-        var source = markdown ?? "";
+        var source = KeepVisibleBreaks(markdown ?? "");
         var document = Markdown.Parse(source, Pipeline);
         var rtf = new StringBuilder();
         var map = new SourceMap(source);
@@ -469,6 +469,7 @@ internal static class RichMarkdown {
                     rtf.Append("\\line ");
                     break;
                 case '\r':
+                case '\u200B':
                     break;
                 default:
                     if (c < 128)
@@ -505,6 +506,52 @@ internal static class RichMarkdown {
                 _previousEnd = span.End;
             return gap;
         }
+    }
+
+    private static string KeepVisibleBreaks(string markdown) {
+        var lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var fence = "";
+        var kept = new List<string>(lines.Length);
+        for (var i = 0; i < lines.Length; i++) {
+            var line = lines[i];
+            var trimmed = line.TrimStart();
+            if (fence.Length > 0) {
+                kept.Add(line);
+                if (trimmed.StartsWith(fence, StringComparison.Ordinal))
+                    fence = "";
+                continue;
+            }
+
+            if (trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith("~~~", StringComparison.Ordinal)) {
+                fence = trimmed[..3];
+                kept.Add(line);
+                continue;
+            }
+
+            var hard = line.EndsWith("  ", StringComparison.Ordinal);
+            if (hard && line.Trim().Length == 0)
+                line = "\u200B" + line;
+            kept.Add(line);
+            if (!hard)
+                continue;
+            var next = i + 1 < lines.Length ? lines[i + 1] : null;
+            if (next is null || next.Length == 0 || StartsNewBlock(next))
+                kept.Add("\u200B");
+        }
+
+        return string.Join("\n", kept);
+    }
+
+    private static bool StartsNewBlock(string line) {
+        var trimmed = line.TrimStart();
+        if (trimmed.Length == 0)
+            return false;
+        if (trimmed[0] is '#' or '>' or '-' or '*' or '+')
+            return true;
+        if (trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith("~~~", StringComparison.Ordinal))
+            return true;
+        var dot = trimmed.IndexOf('.');
+        return dot > 0 && trimmed[..dot].All(char.IsDigit);
     }
 
     private static string Source(string markdown, Block block) {
@@ -1264,7 +1311,23 @@ internal static class RichMarkdown {
                 markdown = markdown.Replace("\n\n\n", "\n\n");
             if (markdown.EndsWith("\n```", StringComparison.Ordinal))
                 markdown += "\n";
-            return markdown.Trim();
+            return KeepHardBreaks(markdown);
+        }
+
+        private static string KeepHardBreaks(string markdown) {
+            var start = 0;
+            var end = markdown.Length;
+            while (start < end && markdown[start] is '\n' or '\r')
+                start++;
+            while (end > start && markdown[end - 1] == '\r')
+                end--;
+            while (end > start && markdown[end - 1] == '\n') {
+                if (end - start >= 3 && markdown[end - 2] == ' ' && markdown[end - 3] == ' ')
+                    break;
+                end--;
+            }
+
+            return markdown[start..end];
         }
 
         private sealed record Run(string Text, bool Bold, bool Italic, bool Code, string? Link, bool Hidden, int Size, bool Raw = false);
