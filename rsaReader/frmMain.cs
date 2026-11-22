@@ -428,23 +428,23 @@ public partial class FormMain : Form {
                 return;
             }
 
-            var start = rtbPreview.SelectionStart;
+            var caret = rtbPreview.SelectionStart;
             var total = rtbPreview.TextLength;
             var before = "";
             var after = "";
-            if (start > 0) {
-                rtbPreview.Select(0, start);
+            if (caret > 0) {
+                rtbPreview.Select(0, caret);
                 before = RichMarkdown.FromRtf(rtbPreview.SelectedRtf);
             }
 
-            if (start < total) {
-                rtbPreview.Select(start, total - start);
+            if (caret < total) {
+                rtbPreview.Select(caret, total - caret);
                 after = RichMarkdown.FromRtf(rtbPreview.SelectedRtf);
             }
 
             _markdown = before + "  \n" + after;
             ShowRich();
-            rtbPreview.Select(Math.Clamp(start, 0, rtbPreview.TextLength), 0);
+            rtbPreview.Select(Math.Clamp(caret, 0, rtbPreview.TextLength), 0);
         });
     }
 
