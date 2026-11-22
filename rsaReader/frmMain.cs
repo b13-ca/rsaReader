@@ -19,16 +19,21 @@ public partial class FormMain : Form {
     private bool _realEdited;
     private string _shownRtf = "";
     private bool _openAsReal;
+    private readonly List<TitleMark> _titleMarks = new();
+    private bool _drawingTitles;
+    private TitleRuleWindow? _titleWindow;
     private readonly Font _plainFont = new("Consolas", 11F);
     private readonly Font _richFont = new("Segoe UI", 12F);
 
     public FormMain() {
         InitializeComponent();
+        AttachTitleRules();
         PrepareEditor();
     }
 
     public FormMain(string? documentPath, string? data, string? keyHex, string? aesKeyHex) {
         InitializeComponent();
+        AttachTitleRules();
         if (!string.IsNullOrWhiteSpace(documentPath) && data is not null) {
             _keyHex = keyHex;
             _aesKeyHex = aesKeyHex;
@@ -292,6 +297,7 @@ public partial class FormMain : Form {
     private void ShowEditor() {
         _live = false;
         _mode = ViewMode.Edit;
+        _titleMarks.Clear();
         ApplyMode();
         ShowPlain();
         _live = true;
@@ -305,6 +311,7 @@ public partial class FormMain : Form {
         ShowRich();
         _realEdited = false;
         _live = true;
+        CollectTitleRules();
         rtbPreview.Focus();
     }
 
@@ -407,11 +414,8 @@ public partial class FormMain : Form {
     private void ApplyTitleRule() {
         var format = new TitleParagraph {
             rgxTabs = new int[32],
-            dwMask = 0x40 | 0x800,
-            dySpaceBefore = 240,
-            wBorderSpace = 1,
-            wBorderWidth = 20,
-            wBorders = 0x48
+            dwMask = 0x40,
+            dySpaceBefore = 240
         };
         format.cbSize = Marshal.SizeOf(format);
         SendMessage(rtbPreview.Handle, 0x447, IntPtr.Zero, ref format);
@@ -448,6 +452,23 @@ public partial class FormMain : Form {
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref TitleParagraph format);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref Point point);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref Rect rect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
 
     private static int LineStart(string text, int index) {
         var i = Math.Clamp(index, 0, text.Length);
@@ -488,16 +509,131 @@ public partial class FormMain : Form {
         if (_mode == ViewMode.Edit)
             _markdown = Normalize(rtbPreview.Text);
         else if (_mode == ViewMode.Real) {
-            if (rtbPreview.Rtf == _shownRtf)
-                return;
-            _realEdited = true;
-            _shownRtf = rtbPreview.Rtf;
-            _markdown = Normalize(RichMarkdown.FromRtf(rtbPreview.Rtf));
+            if (rtbPreview.Rtf != _shownRtf) {
+                _realEdited = true;
+                _shownRtf = rtbPreview.Rtf;
+                _markdown = Normalize(RichMarkdown.FromRtf(rtbPreview.Rtf));
+            }
+
+            CollectTitleRules();
         }
         else
             return;
 
         btnSave.Enabled = _markdown != _savedText;
+    }
+
+    private void AttachTitleRules() {
+        void Attach() {
+            _titleWindow?.ReleaseHandle();
+            _titleWindow = new TitleRuleWindow(DrawTitleRules);
+            _titleWindow.AssignHandle(rtbPreview.Handle);
+        }
+
+        if (rtbPreview.IsHandleCreated)
+            Attach();
+        rtbPreview.HandleCreated += (_, _) => Attach();
+        rtbPreview.HandleDestroyed += (_, _) => _titleWindow?.ReleaseHandle();
+    }
+
+    private void CollectTitleRules() {
+        _titleMarks.Clear();
+        if (_mode != ViewMode.Real || !rtbPreview.IsHandleCreated) {
+            rtbPreview.Invalidate();
+            return;
+        }
+
+        var text = rtbPreview.Text;
+        var start = rtbPreview.SelectionStart;
+        var length = rtbPreview.SelectionLength;
+        var scroll = Point.Empty;
+        SendMessage(rtbPreview.Handle, 0x04DD, IntPtr.Zero, ref scroll);
+        SendMessage(rtbPreview.Handle, 0x000B, IntPtr.Zero, IntPtr.Zero);
+        _suppress = true;
+        try {
+            var at = 0;
+            while (at < text.Length) {
+                var end = text.IndexOf('\n', at);
+                if (end < 0)
+                    end = text.Length;
+                if (end > at) {
+                    rtbPreview.Select(at, 1);
+                    var font = rtbPreview.SelectionFont;
+                    if (font is { Bold: true, Size: >= 12.5f })
+                        _titleMarks.Add(new TitleMark(end, font.Height));
+                }
+
+                if (end >= text.Length)
+                    break;
+                at = end + 1;
+            }
+        }
+        finally {
+            rtbPreview.Select(start, length);
+            SendMessage(rtbPreview.Handle, 0x04DE, IntPtr.Zero, ref scroll);
+            SendMessage(rtbPreview.Handle, 0x000B, new IntPtr(1), IntPtr.Zero);
+            _suppress = false;
+            rtbPreview.Invalidate();
+        }
+    }
+
+    private void DrawTitleRules() {
+        if (_drawingTitles || _mode != ViewMode.Real || _titleMarks.Count == 0 || !rtbPreview.IsHandleCreated)
+            return;
+        _drawingTitles = true;
+        try {
+            using var graphics = Graphics.FromHwnd(rtbPreview.Handle);
+            graphics.PageUnit = GraphicsUnit.Pixel;
+            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            using var gray = new SolidBrush(Color.FromArgb(168, 168, 168));
+            var area = new Rect();
+            SendMessage(rtbPreview.Handle, 0x00B2, IntPtr.Zero, ref area);
+            if (area.Right <= area.Left)
+                area = new Rect { Right = rtbPreview.ClientSize.Width, Bottom = rtbPreview.ClientSize.Height };
+            var margin = pnlPreview.Padding.Right;
+            var left = Math.Max(0, area.Left);
+            var right = Math.Min(area.Right, rtbPreview.ClientSize.Width) - margin + 2;
+            var limit = rtbPreview.ClientSize.Height;
+            if (right <= left)
+                return;
+            graphics.SetClip(rtbPreview.ClientRectangle);
+            foreach (var mark in _titleMarks) {
+                if (mark.Index < 0 || mark.Index > rtbPreview.TextLength)
+                    continue;
+                var origin = rtbPreview.GetPositionFromCharIndex(Math.Max(0, mark.Index - 1));
+                var y = origin.Y + mark.Height + 2;
+                if (mark.Index < rtbPreview.TextLength) {
+                    var next = rtbPreview.GetPositionFromCharIndex(mark.Index + 1);
+                    if (next.Y > origin.Y + 8)
+                        y = next.Y - 4;
+                }
+
+                if (y < 0 || y + 1 >= limit)
+                    continue;
+                var span = right - left;
+                graphics.FillRectangle(Brushes.Black, left, y, span, 1);
+                graphics.FillRectangle(gray, left, y + 1, span, 1);
+            }
+        }
+        finally {
+            _drawingTitles = false;
+        }
+    }
+
+    private readonly record struct TitleMark(int Index, int Height);
+
+    private sealed class TitleRuleWindow : NativeWindow {
+        private readonly Action _paint;
+
+        public TitleRuleWindow(Action paint) {
+            _paint = paint;
+        }
+
+        protected override void WndProc(ref Message m) {
+            base.WndProc(ref m);
+            if (m.Msg == 0x000F)
+                _paint();
+        }
     }
 
     private void Capture() {

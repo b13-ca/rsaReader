@@ -168,7 +168,7 @@ internal static class RichMarkdown {
         var indent = 360 * Math.Max(depth, bullet ? 1 : 0);
         rtf.Append("\\pard");
         if (halfPoints >= 26)
-            rtf.Append("\\sb240\\brdrb\\brdrs\\brdrw20\\brsp1");
+            rtf.Append("\\sb240");
         if (bullet) {
             rtf.Append("{\\*\\pn\\pnlvlblt\\pnf0\\pnindent0{\\pntxtb\\'B7}}\\fi-360");
             indent = Math.Max(indent, 720);
