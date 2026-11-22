@@ -19,6 +19,7 @@ public partial class FormMain : Form {
     private bool _realEdited;
     private string _shownRtf = "";
     private bool _openAsReal;
+    private bool _dark;
     private readonly List<TitleMark> _titleMarks = new();
     private bool _drawingTitles;
     private TitleRuleWindow? _titleWindow;
@@ -319,7 +320,6 @@ public partial class FormMain : Form {
         var edit = _mode == ViewMode.Edit;
         pnlTools.Enabled = _mode == ViewMode.Real;
         rtbPreview.ReadOnly = false;
-        rtbPreview.BackColor = Color.White;
         StyleModeButton(btnEdit, edit);
         StyleModeButton(btnReal, _mode == ViewMode.Real);
     }
@@ -367,15 +367,15 @@ public partial class FormMain : Form {
         if (_mode != ViewMode.Real)
             return;
         rtbPreview.SelectionFont = new Font("Consolas", 11f, FontStyle.Regular);
-        rtbPreview.SelectionBackColor = Color.FromArgb(243, 243, 243);
-        rtbPreview.SelectionColor = Color.Black;
+        rtbPreview.SelectionBackColor = _dark ? Color.FromArgb(46, 46, 46) : Color.FromArgb(243, 243, 243);
+        rtbPreview.SelectionColor = _dark ? Color.White : Color.FromArgb(28, 28, 28);
         rtbPreview.Focus();
     }
 
     private void btnBreak_Click(object sender, EventArgs e) {
         if (_mode != ViewMode.Real)
             return;
-        rtbPreview.SelectedRtf = "{\\rtf1\\ansi\\line}";
+        rtbPreview.SelectedRtf = RichMarkdown.HardBreakRtf;
         rtbPreview.Focus();
     }
 
@@ -403,8 +403,8 @@ public partial class FormMain : Form {
         var to = LineEnd(text, endIndex);
         rtbPreview.Select(from, Math.Max(0, to - from));
         rtbPreview.SelectionBullet = bullet;
-        rtbPreview.SelectionBackColor = Color.White;
-        rtbPreview.SelectionColor = Color.Black;
+        rtbPreview.SelectionBackColor = _dark ? Color.Black : Color.White;
+        rtbPreview.SelectionColor = _dark ? Color.White : Color.FromArgb(28, 28, 28);
         rtbPreview.SelectionFont = new Font("Segoe UI", size, style);
         if (size >= 16f)
             ApplyTitleRule();
@@ -414,8 +414,9 @@ public partial class FormMain : Form {
     private void ApplyTitleRule() {
         var format = new TitleParagraph {
             rgxTabs = new int[32],
-            dwMask = 0x40,
-            dySpaceBefore = 240
+            dwMask = 0x40 | 0x80,
+            dySpaceBefore = 240,
+            dySpaceAfter = 150
         };
         format.cbSize = Marshal.SizeOf(format);
         SendMessage(rtbPreview.Handle, 0x447, IntPtr.Zero, ref format);
@@ -491,7 +492,7 @@ public partial class FormMain : Form {
         if (picked is null)
             return;
         var snippet = image
-            ? RichMarkdown.ImageRtf(picked.Value.Definition, picked.Value.Url)
+            ? RichMarkdown.ImageRtf(picked.Value.Definition, picked.Value.Url, _dark)
             : RichMarkdown.LinkRtf(picked.Value.Definition, picked.Value.Url);
         rtbPreview.SelectedRtf = snippet;
     }
@@ -585,7 +586,10 @@ public partial class FormMain : Form {
             using var graphics = Graphics.FromHwnd(rtbPreview.Handle);
             graphics.PageUnit = GraphicsUnit.Pixel;
             graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
-            using var gray = new SolidBrush(Color.FromArgb(168, 168, 168));
+            var dark = Color.FromArgb(45, 50, 60);
+            var gray = Color.FromArgb(168, 168, 168);
+            using var top = new SolidBrush(_dark ? gray : dark);
+            using var bottom = new SolidBrush(_dark ? dark : gray);
             var area = new Rect();
             SendMessage(rtbPreview.Handle, 0x00B2, IntPtr.Zero, ref area);
             if (area.Right <= area.Left)
@@ -597,22 +601,30 @@ public partial class FormMain : Form {
             if (right <= left)
                 return;
             graphics.SetClip(rtbPreview.ClientRectangle);
+            var zoom = rtbPreview.ZoomFactor;
+            if (zoom <= 0f)
+                zoom = 1f;
+            var pad = Math.Max(2, (int)Math.Round(8 * zoom));
             foreach (var mark in _titleMarks) {
                 if (mark.Index < 0 || mark.Index > rtbPreview.TextLength)
                     continue;
                 var origin = rtbPreview.GetPositionFromCharIndex(Math.Max(0, mark.Index - 1));
-                var y = origin.Y + mark.Height + 2;
+                var textBottom = origin.Y + (int)Math.Round(mark.Height * zoom);
+                var y = textBottom + Math.Max(1, (int)Math.Round(2 * zoom));
                 if (mark.Index < rtbPreview.TextLength) {
                     var next = rtbPreview.GetPositionFromCharIndex(mark.Index + 1);
-                    if (next.Y > origin.Y + 8)
-                        y = next.Y - 4;
+                    if (next.Y > textBottom)
+                        y = next.Y - pad;
                 }
+
+                if (y < textBottom)
+                    y = textBottom;
 
                 if (y < 0 || y + 1 >= limit)
                     continue;
                 var span = right - left;
-                graphics.FillRectangle(Brushes.Black, left, y, span, 1);
-                graphics.FillRectangle(gray, left, y + 1, span, 1);
+                graphics.FillRectangle(top, left, y, span, 1);
+                graphics.FillRectangle(bottom, left, y + 1, span, 1);
             }
         }
         finally {
@@ -649,7 +661,7 @@ public partial class FormMain : Form {
             rtbPreview.WordWrap = false;
             rtbPreview.Font = _plainFont;
             rtbPreview.Text = _markdown;
-            rtbPreview.BackColor = Color.White;
+            ApplyEditorColors(false);
         }
         finally {
             _suppress = false;
@@ -661,13 +673,44 @@ public partial class FormMain : Form {
         try {
             rtbPreview.WordWrap = true;
             rtbPreview.Font = _richFont;
-            rtbPreview.Rtf = RichMarkdown.ToRtf(_markdown);
+            ApplyEditorColors(true);
+            rtbPreview.Rtf = RichMarkdown.ToRtf(_markdown, _dark);
+            ApplyEditorColors(true);
             _shownRtf = rtbPreview.Rtf;
-            rtbPreview.BackColor = Color.White;
         }
         finally {
             _suppress = false;
         }
+    }
+
+    private void btnTheme_Click(object sender, EventArgs e) {
+        _dark = !_dark;
+        btnTheme.Text = _dark ? "DARK" : "WHITE";
+        if (_mode != ViewMode.Real)
+            return;
+        var start = rtbPreview.SelectionStart;
+        var length = rtbPreview.SelectionLength;
+        var scroll = Point.Empty;
+        SendMessage(rtbPreview.Handle, 0x04DD, IntPtr.Zero, ref scroll);
+        ShowRich();
+        rtbPreview.Select(start, length);
+        SendMessage(rtbPreview.Handle, 0x04DE, IntPtr.Zero, ref scroll);
+        rtbPreview.Invalidate();
+    }
+
+    private void ApplyEditorColors(bool real) {
+        var back = real && _dark ? Color.Black : Color.White;
+        var fore = real && _dark ? Color.White : Color.FromArgb(28, 28, 28);
+        pnlPreview.BackColor = back;
+        rtbPreview.BackColor = back;
+        rtbPreview.ForeColor = fore;
+        if (!real || rtbPreview.TextLength == 0)
+            return;
+        var start = rtbPreview.SelectionStart;
+        var length = rtbPreview.SelectionLength;
+        rtbPreview.SelectAll();
+        rtbPreview.SelectionColor = fore;
+        rtbPreview.Select(start, length);
     }
 
     private static string Normalize(string? text) {

@@ -9,6 +9,9 @@ namespace rsaReader;
 
 internal static class RichMarkdown {
     private const char HardBreak = '\uE000';
+    private const string HardBreakMark = "\\v br:\\v0 ";
+
+    public const string HardBreakRtf = "{\\rtf1\\ansi\\v br:\\v0\\line}";
 
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
@@ -16,14 +19,28 @@ internal static class RichMarkdown {
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(3) };
 
-    public static string ToRtf(string? markdown) {
+    private static Color _pictureBack = Color.White;
+
+    public static string ToRtf(string? markdown, bool dark = false) {
+        var previous = _pictureBack;
+        _pictureBack = dark ? Color.Black : Color.White;
+        try {
+            return BuildRtf(markdown, dark);
+        }
+        finally {
+            _pictureBack = previous;
+        }
+    }
+
+    private static string BuildRtf(string? markdown, bool dark) {
         var source = markdown ?? "";
         var document = Markdown.Parse(source, Pipeline);
         var rtf = new StringBuilder();
         var map = new SourceMap(source);
+        var codeBack = dark ? "\\red46\\green46\\blue46" : "\\red243\\green243\\blue243";
         rtf.Append("{\\rtf1\\ansi\\ansicpg1252\\deff0\\deflang1033");
         rtf.Append("{\\fonttbl{\\f0\\fnil\\fcharset0 Segoe UI;}{\\f1\\fnil\\fcharset0 Consolas;}}");
-        rtf.Append("{\\colortbl ;\\red11\\green87\\blue208;\\red243\\green243\\blue243;}");
+        rtf.Append("{\\colortbl ;\\red11\\green87\\blue208;").Append(codeBack).Append(";}");
         rtf.Append("\\viewkind4\\uc1");
         foreach (var block in document)
             RenderBlock(rtf, map, block, 0);
@@ -47,12 +64,19 @@ internal static class RichMarkdown {
         return rtf.ToString();
     }
 
-    public static string ImageRtf(string alt, string url) {
-        var rtf = new StringBuilder();
-        rtf.Append("{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Segoe UI;}}{\\colortbl ;\\red11\\green87\\blue208;}\\f0\\fs24 ");
-        RenderImage(rtf, alt, url);
-        rtf.Append('}');
-        return rtf.ToString();
+    public static string ImageRtf(string alt, string url, bool dark = false) {
+        var previous = _pictureBack;
+        _pictureBack = dark ? Color.Black : Color.White;
+        try {
+            var rtf = new StringBuilder();
+            rtf.Append("{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Segoe UI;}}{\\colortbl ;\\red11\\green87\\blue208;}\\f0\\fs24 ");
+            RenderImage(rtf, alt, url);
+            rtf.Append('}');
+            return rtf.ToString();
+        }
+        finally {
+            _pictureBack = previous;
+        }
     }
 
     private static void RenderBlock(StringBuilder rtf, SourceMap map, Block block, int depth) {
@@ -168,7 +192,7 @@ internal static class RichMarkdown {
         var indent = 360 * Math.Max(depth, bullet ? 1 : 0);
         rtf.Append("\\pard");
         if (halfPoints >= 26)
-            rtf.Append("\\sb240");
+            rtf.Append("\\sb240\\sa150");
         if (bullet) {
             rtf.Append("{\\*\\pn\\pnlvlblt\\pnf0\\pnindent0{\\pntxtb\\'B7}}\\fi-360");
             indent = Math.Max(indent, 720);
@@ -206,7 +230,9 @@ internal static class RichMarkdown {
             case LiteralInline literal:
                 AppendLiteral(rtf, literal.Content.ToString());
                 break;
-            case LineBreakInline:
+            case LineBreakInline line:
+                if (line.IsHard)
+                    rtf.Append(HardBreakMark);
                 rtf.Append("\\line ");
                 break;
             case CodeInline code:
@@ -250,6 +276,7 @@ internal static class RichMarkdown {
                 AppendLiteral(rtf, entity.Transcoded.ToString());
                 break;
             case HtmlInline html when html.Tag.StartsWith("<br", StringComparison.OrdinalIgnoreCase):
+                rtf.Append(HardBreakMark);
                 rtf.Append("\\line ");
                 break;
             case ContainerInline container:
@@ -302,9 +329,9 @@ internal static class RichMarkdown {
             using var image = Image.FromStream(input);
             var width = Math.Min(image.Width, 520);
             var height = Math.Max(1, image.Height * width / Math.Max(1, image.Width));
-            using var bitmap = new Bitmap(width, height);
+            using var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
             using (var draw = Graphics.FromImage(bitmap)) {
-                draw.Clear(Color.White);
+                draw.Clear(_pictureBack);
                 draw.DrawImage(image, 0, 0, width, height);
             }
 
@@ -511,6 +538,7 @@ internal static class RichMarkdown {
         private bool _hidden;
         private bool _bullet;
         private bool _keep;
+        private bool _hardBreak;
         private int _font;
         private int _fs = 24;
         private string? _link;
@@ -752,10 +780,13 @@ internal static class RichMarkdown {
                 case "par":
                     FlushParagraph();
                     _hidden = false;
+                    _hardBreak = false;
                     break;
                 case "line":
                     FlushRun();
-                    _runs.Add(new Run("\n", _bold, _italic, IsCodeFont(_font), _link, false, _fs));
+                    var hard = _hardBreak;
+                    _hardBreak = false;
+                    _runs.Add(new Run(hard ? "  \n" : "\n", _bold, _italic, IsCodeFont(_font), _link, false, _fs));
                     break;
                 case "pard":
                     FlushRun();
@@ -1026,6 +1057,8 @@ internal static class RichMarkdown {
                     BeginEcho(LinkMarkdown(label, linkUrl), label, linkUrl);
                 else if (hidden == "keep:")
                     _keep = true;
+                else if (hidden == "br:")
+                    _hardBreak = true;
                 else if (hidden.StartsWith("gap:", StringComparison.Ordinal) && int.TryParse(hidden.AsSpan(4), out var gap))
                     _gap = gap;
                 else if (hidden.StartsWith("task:", StringComparison.Ordinal))
@@ -1073,6 +1106,7 @@ internal static class RichMarkdown {
         private void FlushParagraph() {
             FinishPending();
             FlushRun();
+            _hardBreak = false;
             if (_imageMarkdown is not null) {
                 _runs.Add(new Run(_imageMarkdown, false, false, false, null, false, _fs, true));
                 _imageMarkdown = null;
@@ -1164,8 +1198,15 @@ internal static class RichMarkdown {
                 }
 
                 var piece = run.Text.Replace("\r", "");
-                if (piece == "\n") {
-                    text.Append('\n');
+                if (piece is "\n" or "  \n") {
+                    if (allCode)
+                        text.Append('\n');
+                    else {
+                        var hard = piece == "  \n" || EndsWithTwoSpaces(text);
+                        if (EndsWithTwoSpaces(text))
+                            text.Length -= 2;
+                        text.Append(hard ? "  \n" : "\n");
+                    }
                     continue;
                 }
 
@@ -1187,7 +1228,14 @@ internal static class RichMarkdown {
                 text.Append(piece);
             }
 
-            return text.ToString().TrimStart();
+            var markdown = text.ToString();
+            if (markdown.StartsWith("  \n", StringComparison.Ordinal))
+                return markdown;
+            return markdown.TrimStart();
+        }
+
+        private static bool EndsWithTwoSpaces(StringBuilder text) {
+            return text.Length >= 2 && text[^1] == ' ' && text[^2] == ' ';
         }
 
         private static string Escape(string text) {

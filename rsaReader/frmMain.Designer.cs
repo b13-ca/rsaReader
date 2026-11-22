@@ -13,6 +13,7 @@ partial class FormMain {
         this.pnlSave = new Panel();
         this.btnLoad = new Button();
         this.btnSave = new Button();
+        this.btnTheme = new Button();
         this.pnlModes = new Panel();
         this.btnEdit = new Button();
         this.btnReal = new Button();
@@ -59,10 +60,11 @@ partial class FormMain {
         // 
         this.pnlSave.Controls.Add(this.btnLoad);
         this.pnlSave.Controls.Add(this.btnSave);
+        this.pnlSave.Controls.Add(this.btnTheme);
         this.pnlSave.Dock = DockStyle.Left;
         this.pnlSave.Location = new Point(0, 0);
         this.pnlSave.Name = "pnlSave";
-        this.pnlSave.Size = new Size(200, 40);
+        this.pnlSave.Size = new Size(288, 40);
         this.pnlSave.TabIndex = 1;
         // 
         // btnLoad
@@ -85,6 +87,16 @@ partial class FormMain {
         this.btnSave.Text = "Save";
         this.btnSave.UseVisualStyleBackColor = true;
         this.btnSave.Click += this.btnSave_Click;
+        // 
+        // btnTheme
+        // 
+        this.btnTheme.Location = new Point(200, 6);
+        this.btnTheme.Name = "btnTheme";
+        this.btnTheme.Size = new Size(80, 28);
+        this.btnTheme.TabIndex = 2;
+        this.btnTheme.Text = "WHITE";
+        this.btnTheme.UseVisualStyleBackColor = true;
+        this.btnTheme.Click += this.btnTheme_Click;
         // 
         // pnlModes
         // 
@@ -272,6 +284,7 @@ partial class FormMain {
     private Panel pnlSave;
     private Button btnLoad;
     private Button btnSave;
+    private Button btnTheme;
     private Panel pnlModes;
     private Button btnEdit;
     private Button btnReal;
