@@ -421,8 +421,7 @@ public partial class FormMain : Form {
 
     private void btnBreak_Click(object sender, EventArgs e) {
         if (_mode == ViewMode.Real) {
-            InsertPreviewBreak();
-            rtbPreview.Focus();
+            BeginInvoke(() => InsertPreviewText("  \n"));
             return;
         }
 
@@ -433,33 +432,67 @@ public partial class FormMain : Form {
         });
     }
 
-    private void InsertPreviewBreak() {
-        if (_realEdited)
-            RichMarkdown.ToRtf(_markdown, _dark);
+    private void InsertPreviewText(string insertion) {
         var text = rtbPreview.Text ?? "";
         var start = Math.Clamp(rtbPreview.SelectionStart, 0, text.Length);
         var end = Math.Clamp(start + Math.Max(0, rtbPreview.SelectionLength), start, text.Length);
+        if (_realEdited)
+            _markdown = Normalize(RichMarkdown.FromRtf(rtbPreview.Rtf));
         var from = RichMarkdown.SourceIndex(text, start, _markdown.Length);
         var to = end == start ? from : RichMarkdown.SourceIndex(text, end, _markdown.Length);
         if (to < from)
             (from, to) = (to, from);
         from = Math.Clamp(from, 0, _markdown.Length);
         to = Math.Clamp(to, from, _markdown.Length);
-        _markdown = _markdown.Remove(from, to - from).Insert(from, "  \n");
+        _markdown = _markdown.Remove(from, to - from).Insert(from, insertion);
+        ReloadPreview(text, start, end);
+    }
+
+    private void ReloadPreview(string before, int start, int end) {
+        _live = false;
         _realEdited = false;
         _titleMarks.Clear();
-        ShowRich();
-        var caret = RichMarkdown.ControlCaret(rtbPreview.Text ?? "", from + 3);
+        try {
+            ShowRich();
+        }
+        finally {
+            _live = true;
+        }
+
+        CollectTitleRules();
+        var after = rtbPreview.Text ?? "";
+        var caret = CaretAfterInsert(before, after, start, end);
         _suppress = true;
         try {
+            rtbPreview.Focus();
             rtbPreview.Select(Math.Clamp(caret, 0, rtbPreview.TextLength), 0);
+            rtbPreview.ScrollToCaret();
         }
         finally {
             _suppress = false;
         }
 
-        CollectTitleRules();
+        rtbPreview.Invalidate();
+        rtbPreview.Update();
         btnSave.Enabled = _markdown != _savedText;
+    }
+
+    private static int CaretAfterInsert(string before, string after, int start, int end) {
+        start = Math.Clamp(start, 0, before.Length);
+        end = Math.Clamp(end, start, before.Length);
+        var prefix = 0;
+        var head = Math.Min(start, after.Length);
+        while (prefix < head && before[prefix] == after[prefix])
+            prefix++;
+        var suffix = 0;
+        var tail = before.Length - end;
+        while (suffix < tail && suffix < after.Length - prefix
+            && before[before.Length - 1 - suffix] == after[after.Length - 1 - suffix])
+            suffix++;
+        var caret = after.Length - suffix;
+        if (caret < prefix)
+            caret = prefix;
+        return Math.Clamp(caret, 0, after.Length);
     }
 
     private void RunButton(Action action) {
@@ -877,7 +910,8 @@ public partial class FormMain : Form {
         if (_mode != ViewMode.Real || e.KeyCode != Keys.Enter || e.Control || e.Alt)
             return;
         e.SuppressKeyPress = true;
-        rtbPreview.SelectedRtf = "{\\rtf1\\ansi\\line}";
+        e.Handled = true;
+        BeginInvoke(() => InsertPreviewText("\n"));
     }
 
     private void rtbPreview_TextChanged(object sender, EventArgs e) {
@@ -946,9 +980,9 @@ public partial class FormMain : Form {
             }
         }
         finally {
-            rtbPreview.Select(start, length);
             SendMessage(rtbPreview.Handle, 0x04DE, IntPtr.Zero, ref scroll);
             SendMessage(rtbPreview.Handle, 0x000B, new IntPtr(1), IntPtr.Zero);
+            rtbPreview.Select(start, length);
             _suppress = false;
             rtbPreview.Invalidate();
         }
@@ -1050,6 +1084,7 @@ public partial class FormMain : Form {
             rtbPreview.WordWrap = true;
             rtbPreview.Font = _richFont;
             ApplyEditorColors(true);
+            rtbPreview.Clear();
             rtbPreview.Rtf = RichMarkdown.ToRtf(_markdown, _dark);
             ApplyEditorColors(true);
             _shownRtf = rtbPreview.Rtf ?? "";
