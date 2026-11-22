@@ -1,3 +1,5 @@
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Text;
 using Markdig;
 using Markdig.Syntax;
@@ -235,11 +237,14 @@ internal static class RichMarkdown {
             case AutolinkInline autolink:
                 RenderLink(rtf, autolink.Url, autolink.Url);
                 break;
+            case HtmlEntityInline entity:
+                AppendLiteral(rtf, entity.Transcoded.ToString());
+                break;
+            case HtmlInline html when html.Tag.StartsWith("<br", StringComparison.OrdinalIgnoreCase):
+                rtf.Append("\\line ");
+                break;
             case ContainerInline container:
                 RenderInline(rtf, container, bold, italic);
-                break;
-            default:
-                AppendText(rtf, inline.ToString() ?? "");
                 break;
         }
     }
@@ -253,6 +258,11 @@ internal static class RichMarkdown {
     private static void RenderLink(StringBuilder rtf, string text, string url) {
         if (text.Length == 0)
             text = url;
+        AppendMarker(rtf, "lnk:", text, url);
+        AppendLinkField(rtf, text, url);
+    }
+
+    private static void AppendLinkField(StringBuilder rtf, string text, string url) {
         rtf.Append("{\\field{\\*\\fldinst{HYPERLINK \"");
         AppendText(rtf, url);
         rtf.Append("\"}}{\\fldrslt{\\ul\\cf1 ");
@@ -260,14 +270,18 @@ internal static class RichMarkdown {
         rtf.Append("\\ul0\\cf0}}}");
     }
 
+    private static void AppendMarker(StringBuilder rtf, string kind, string text, string url) {
+        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(text + "\n" + url));
+        rtf.Append("\\v ").Append(kind).Append(payload).Append("\\v0 ");
+    }
+
     private static void RenderImage(StringBuilder rtf, string alt, string url) {
-        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(alt + "\n" + url));
-        rtf.Append("\\v img:").Append(payload).Append("\\v0 ");
+        AppendMarker(rtf, "img:", alt, url);
         var picture = TryPicture(url);
         if (picture is not null)
             rtf.Append(picture);
         else
-            RenderLink(rtf, string.IsNullOrEmpty(alt) ? url : alt, url);
+            AppendLinkField(rtf, string.IsNullOrEmpty(alt) ? url : alt, url);
     }
 
     private static string? TryPicture(string url) {
@@ -277,28 +291,75 @@ internal static class RichMarkdown {
         try {
             using var input = new MemoryStream(bytes);
             using var image = Image.FromStream(input);
-            using var output = new MemoryStream();
-            image.Save(output, System.Drawing.Imaging.ImageFormat.Png);
-            var png = output.ToArray();
             var width = Math.Min(image.Width, 520);
             var height = Math.Max(1, image.Height * width / Math.Max(1, image.Width));
-            var twipsW = width * 1440 / 96;
-            var twipsH = height * 1440 / 96;
-            var hex = new StringBuilder(png.Length * 2 + 64);
-            hex.Append("{\\pict\\pngblip\\picwgoal").Append(twipsW).Append("\\pichgoal").Append(twipsH).Append(' ');
-            for (var i = 0; i < png.Length; i++) {
-                hex.Append(png[i].ToString("x2"));
-                if (i % 64 == 63)
-                    hex.Append('\n');
+            using var bitmap = new Bitmap(width, height);
+            using (var draw = Graphics.FromImage(bitmap)) {
+                draw.Clear(Color.White);
+                draw.DrawImage(image, 0, 0, width, height);
             }
 
-            hex.Append('}');
-            return hex.ToString();
+            return MetafilePicture(bitmap, width, height);
         }
-        catch (Exception ex) when (ex is ArgumentException or OutOfMemoryException or IOException) {
+        catch (Exception ex) when (ex is ArgumentException or OutOfMemoryException or IOException or ExternalException) {
             return null;
         }
     }
+
+    private static string? MetafilePicture(Image image, int width, int height) {
+        using var stream = new MemoryStream();
+        using var screen = Graphics.FromHwnd(IntPtr.Zero);
+        var hdc = screen.GetHdc();
+        Metafile metafile;
+        try {
+            metafile = new Metafile(stream, hdc, new Rectangle(0, 0, width, height), MetafileFrameUnit.Pixel, EmfType.EmfOnly);
+        }
+        finally {
+            screen.ReleaseHdc(hdc);
+        }
+
+        using (var draw = Graphics.FromImage(metafile))
+            draw.DrawImage(image, 0, 0, width, height);
+
+        var handle = metafile.GetHenhmetafile();
+        try {
+            var size = GdipEmfToWmfBits(handle, 0, null, MmAnisotropic, 0);
+            if (size <= 0)
+                return null;
+            var buffer = new byte[size];
+            if (GdipEmfToWmfBits(handle, (uint)size, buffer, MmAnisotropic, 0) <= 0)
+                return null;
+            var picw = width * 2540 / 96;
+            var pich = height * 2540 / 96;
+            var goalW = width * 1440 / 96;
+            var goalH = height * 1440 / 96;
+            var rtf = new StringBuilder(buffer.Length * 2 + 64);
+            rtf.Append("{\\pict\\wmetafile8\\picw").Append(picw);
+            rtf.Append("\\pich").Append(pich);
+            rtf.Append("\\picwgoal").Append(goalW);
+            rtf.Append("\\pichgoal").Append(goalH).Append(' ');
+            for (var i = 0; i < buffer.Length; i++) {
+                rtf.Append(buffer[i].ToString("x2"));
+                if (i % 64 == 63)
+                    rtf.Append('\n');
+            }
+
+            rtf.Append('}');
+            return rtf.ToString();
+        }
+        finally {
+            DeleteEnhMetaFile(handle);
+            metafile.Dispose();
+        }
+    }
+
+    private const int MmAnisotropic = 8;
+
+    [DllImport("gdiplus.dll")]
+    private static extern int GdipEmfToWmfBits(IntPtr hemf, uint bufferSize, byte[]? buffer, int mappingMode, int flags);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteEnhMetaFile(IntPtr hemf);
 
     private static byte[]? LoadBytes(string url) {
         try {
@@ -332,6 +393,9 @@ internal static class RichMarkdown {
                     break;
                 case CodeInline code:
                     text.Append(code.Content);
+                    break;
+                case HtmlEntityInline entity:
+                    text.Append(entity.Transcoded.ToString());
                     break;
                 case ContainerInline container:
                     CollectPlain(container, text);
@@ -410,6 +474,9 @@ internal static class RichMarkdown {
         private int _fs = 24;
         private string? _link;
         private string? _imageMarkdown;
+        private string? _pendingMarkdown;
+        private string[]? _echoes;
+        private readonly StringBuilder _echo = new();
         private readonly Dictionary<int, string> _fonts = new();
         private readonly StringBuilder _run = new();
         private readonly List<Run> _runs = new();
@@ -516,15 +583,35 @@ internal static class RichMarkdown {
         }
 
         private void ReadFieldInstruction() {
+            if (_i < _rtf.Length && _rtf[_i] == '{')
+                _i++;
             var text = ReadGroupText();
-            var marker = "HYPERLINK \"";
+            var marker = "HYPERLINK";
             var at = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
             if (at < 0)
                 return;
             at += marker.Length;
-            var end = text.IndexOf('"', at);
-            if (end > at)
-                _link = text[at..end];
+            while (at < text.Length && text[at] == ' ')
+                at++;
+            if (at >= text.Length)
+                return;
+            string url;
+            if (text[at] == '"') {
+                var end = text.IndexOf('"', at + 1);
+                if (end <= at + 1)
+                    return;
+                url = text[(at + 1)..end];
+            }
+            else {
+                var end = at;
+                while (end < text.Length && !char.IsWhiteSpace(text[end]) && text[end] != '}')
+                    end++;
+                if (end <= at)
+                    return;
+                url = text[at..end];
+            }
+
+            _link = url.Replace("\\\\", "\\");
         }
 
         private string ReadGroupText() {
@@ -542,7 +629,7 @@ internal static class RichMarkdown {
                     depth++;
                 else if (c == '}')
                     depth--;
-                else if (depth == 1)
+                else
                     text.Append(c);
             }
 
@@ -777,12 +864,102 @@ internal static class RichMarkdown {
                 return;
             }
 
+            if (_echoes is not null && TakeEcho(c))
+                return;
+
             if (_imageMarkdown is not null) {
                 EmitRaw(_imageMarkdown);
                 _imageMarkdown = null;
             }
 
             _run.Append(c);
+        }
+
+        private bool TakeEcho(char c) {
+            var next = _echo.ToString() + c;
+            var extends = false;
+            var exact = false;
+            var longer = false;
+            foreach (var candidate in _echoes!) {
+                if (!candidate.StartsWith(next, StringComparison.Ordinal))
+                    continue;
+                extends = true;
+                if (candidate.Length == next.Length)
+                    exact = true;
+                else
+                    longer = true;
+            }
+
+            if (extends) {
+                _echo.Append(c);
+                if (exact && !longer)
+                    CommitPending();
+                return true;
+            }
+
+            var buffered = _echo.ToString();
+            if (buffered.Length == 0) {
+                var markdown = _pendingMarkdown;
+                ClearPending();
+                if (!string.IsNullOrEmpty(markdown))
+                    EmitRaw(markdown);
+                return false;
+            }
+
+            if (IsEcho(buffered)) {
+                CommitPending();
+                return false;
+            }
+
+            AbandonPending(buffered);
+            return false;
+        }
+
+        private void BeginEcho(string markdown, string text, string url) {
+            FinishPending();
+            _pendingMarkdown = markdown;
+            _echoes = text == url
+                ? new[] { "<" + url + ">", url + " <" + url + ">", url }
+                : new[] { text + " <" + url + ">", text };
+            _echo.Clear();
+        }
+
+        private void FinishPending() {
+            if (_pendingMarkdown is null && _echoes is null)
+                return;
+            var buffered = _echo.ToString();
+            if (buffered.Length == 0 || IsEcho(buffered))
+                CommitPending();
+            else
+                AbandonPending(buffered);
+        }
+
+        private bool IsEcho(string buffered) {
+            if (_echoes is null)
+                return false;
+            foreach (var candidate in _echoes)
+                if (candidate == buffered)
+                    return true;
+            return false;
+        }
+
+        private void CommitPending() {
+            var markdown = _pendingMarkdown;
+            ClearPending();
+            if (!string.IsNullOrEmpty(markdown))
+                EmitRaw(markdown);
+        }
+
+        private void AbandonPending(string buffered) {
+            ClearPending();
+            foreach (var c in buffered)
+                _run.Append(c);
+        }
+
+        private void ClearPending() {
+            _pendingMarkdown = null;
+            _echoes = null;
+            _echo.Clear();
         }
 
         private void EmitRaw(string markdown) {
@@ -792,10 +969,12 @@ internal static class RichMarkdown {
 
         private void FlushRun() {
             if (_hidden) {
-                var hidden = _run.ToString();
+                var hidden = _run.ToString().Trim();
                 _run.Clear();
-                if (hidden.StartsWith("img:", StringComparison.Ordinal))
-                    _imageMarkdown = ImageMarkdown(hidden[4..]);
+                if (hidden.StartsWith("img:", StringComparison.Ordinal) && TryPair(hidden[4..], out var alt, out var imageUrl))
+                    BeginEcho(ImageMarkdown(alt, imageUrl), string.IsNullOrEmpty(alt) ? imageUrl : alt, imageUrl);
+                else if (hidden.StartsWith("lnk:", StringComparison.Ordinal) && TryPair(hidden[4..], out var label, out var linkUrl))
+                    BeginEcho(LinkMarkdown(label, linkUrl), label, linkUrl);
                 else if (hidden == "keep:")
                     _keep = true;
                 else if (hidden.StartsWith("task:", StringComparison.Ordinal))
@@ -810,17 +989,29 @@ internal static class RichMarkdown {
             _run.Clear();
         }
 
-        private static string ImageMarkdown(string payload) {
+        private static bool TryPair(string payload, out string left, out string right) {
+            left = "";
+            right = "";
             try {
                 var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(payload));
                 var split = decoded.Split('\n', 2);
-                var alt = split[0];
-                var url = split.Length > 1 ? split[1] : "";
-                return "![" + alt + "](" + url + ")";
+                left = split[0];
+                right = split.Length > 1 ? split[1] : "";
+                return true;
             }
             catch (FormatException) {
-                return "";
+                return false;
             }
+        }
+
+        private static string ImageMarkdown(string alt, string url) {
+            return "![" + alt + "](" + url + ")";
+        }
+
+        private static string LinkMarkdown(string text, string url) {
+            var label = text.Replace("\\", "\\\\").Replace("[", "\\[").Replace("]", "\\]");
+            var target = url.IndexOfAny([' ', '(', ')']) >= 0 ? "<" + url.Replace(">", "%3E") + ">" : url;
+            return "[" + label + "](" + target + ")";
         }
 
         private bool IsCodeFont(int font) {
@@ -829,6 +1020,7 @@ internal static class RichMarkdown {
         }
 
         private void FlushParagraph() {
+            FinishPending();
             FlushRun();
             if (_imageMarkdown is not null) {
                 _runs.Add(new Run(_imageMarkdown, false, false, false, null, false, _fs, true));
@@ -951,7 +1143,7 @@ internal static class RichMarkdown {
         }
 
         private static string Escape(string text) {
-            return text.Replace("\\", "\\\\").Replace("`", "\\`").Replace("*", "\\*").Replace("_", "\\_").Replace("[", "\\[");
+            return text.Replace("\\", "\\\\").Replace("`", "\\`").Replace("*", "\\*").Replace("_", "\\_").Replace("[", "\\[").Replace("\u00A0", "&nbsp;");
         }
 
         private void Separate(bool list) {
