@@ -1,10 +1,5 @@
-using System.Reflection;
-using System.Text.Json;
-using CefSharp;
+using System.Diagnostics;
 
-// You must do a publish to have a single .exe file with all the dependencies.
-// The CefSharp.WinForms package is not enough to run the application, 
-// you need to include the CefSharp.Common and CefSharp.WinForms packages as well.
 namespace rsaReader;
 
 public partial class FormMain : Form {
@@ -15,17 +10,13 @@ public partial class FormMain : Form {
     }
 
     private ViewMode _mode;
-    private bool _previewReady;
-    private bool _previewInitStarted;
-    private bool _emptyPreviewLoaded;
-    private bool _emptyPreviewStarted;
     private string? _documentPath;
     private string? _keyHex;
     private string? _aesKeyHex;
     private string _savedText = "";
     private bool _suppressDirty;
+    private bool _suppressRich;
     private bool _preparedPreview;
-    private RealEditorBridge? _realBridge;
 
     public FormMain() {
         InitializeComponent();
@@ -77,15 +68,13 @@ public partial class FormMain : Form {
         base.OnFormClosed(e);
     }
 
-    private async void btnSave_Click(object sender, EventArgs e) {
-        if (_mode == ViewMode.Real)
-            await FlushReal();
+    private void btnSave_Click(object sender, EventArgs e) {
+        FlushRich();
         TrySave();
     }
 
-    private async void btnLoad_Click(object sender, EventArgs e) {
-        if (_mode == ViewMode.Real)
-            await FlushReal();
+    private void btnLoad_Click(object sender, EventArgs e) {
+        FlushRich();
         if (!ConfirmReplace())
             return;
 
@@ -284,24 +273,19 @@ public partial class FormMain : Form {
         btnSave.Enabled = false;
         Text = "rsaReader - " + Path.GetFileName(path);
         _suppressDirty = false;
-        webPreview.Visible = false;
     }
 
-    private async void btnEdit_Click(object sender, EventArgs e) {
+    private void btnEdit_Click(object sender, EventArgs e) {
         if (_mode == ViewMode.Edit)
             return;
-        if (_mode == ViewMode.Real)
-            await FlushReal();
+        FlushRich();
         ShowEditor();
     }
 
-    private async void btnPreview_Click(object sender, EventArgs e) {
+    private void btnPreview_Click(object sender, EventArgs e) {
         if (_mode == ViewMode.Preview)
             return;
-        if (_mode == ViewMode.Real) {
-            await FlushReal();
-            await SetEditable(false);
-        }
+        FlushRich();
         ShowPreview();
     }
 
@@ -313,9 +297,7 @@ public partial class FormMain : Form {
     private void ShowPreview() {
         _mode = ViewMode.Preview;
         ApplyMode();
-        EnsurePreview();
-        if (_emptyPreviewLoaded)
-            RenderPreview();
+        RenderRich();
     }
 
     private void ShowEditor() {
@@ -328,12 +310,9 @@ public partial class FormMain : Form {
         var fromEdit = _mode == ViewMode.Edit;
         _mode = ViewMode.Real;
         ApplyMode();
-        EnsurePreview();
-        if (!_emptyPreviewLoaded)
-            return;
         if (fromEdit)
-            RenderPreview();
-        _ = SetEditable(true);
+            RenderRich();
+        rtbPreview.Focus();
     }
 
     private void ApplyMode() {
@@ -341,6 +320,8 @@ public partial class FormMain : Form {
         pnlTools.Enabled = _mode == ViewMode.Real;
         pnlEditor.Enabled = edit;
         pnlPreview.Enabled = !edit;
+        rtbPreview.ReadOnly = _mode != ViewMode.Real;
+        rtbPreview.BackColor = Color.White;
         if (edit) {
             splitView.Panel1Collapsed = false;
             splitView.Panel2Collapsed = true;
@@ -349,11 +330,6 @@ public partial class FormMain : Form {
             splitView.Panel2Collapsed = false;
             splitView.Panel1Collapsed = true;
         }
-
-        if (edit || lblPreview.Visible)
-            webPreview.Visible = false;
-        else if (_emptyPreviewLoaded)
-            webPreview.Visible = true;
 
         StyleModeButton(btnEdit, edit);
         StyleModeButton(btnPreview, _mode == ViewMode.Preview);
@@ -391,112 +367,103 @@ public partial class FormMain : Form {
         e.Graphics.DrawLine(pen, 0, 0, pnlTools.Width, 0);
     }
 
-    private async void btnBold_Click(object sender, EventArgs e) {
-        await RealCommand("cmdBold()");
+    private void btnBold_Click(object sender, EventArgs e) {
+        ToggleStyle(FontStyle.Bold);
     }
 
-    private async void btnH1_Click(object sender, EventArgs e) {
-        await RealCommand("cmdH1()");
+    private void btnH1_Click(object sender, EventArgs e) {
+        FormatParagraph(22f, FontStyle.Bold, false);
     }
 
-    private async void btnH2_Click(object sender, EventArgs e) {
-        await RealCommand("cmdH2()");
+    private void btnH2_Click(object sender, EventArgs e) {
+        FormatParagraph(16f, FontStyle.Bold, false);
     }
 
-    private async void btnBullet_Click(object sender, EventArgs e) {
-        await RealCommand("cmdBullet()");
-    }
-
-    private async void btnLink_Click(object sender, EventArgs e) {
-        await InsertRealTarget(false);
-    }
-
-    private async void btnImage_Click(object sender, EventArgs e) {
-        await InsertRealTarget(true);
-    }
-
-    private async void btnCode_Click(object sender, EventArgs e) {
-        await RealCommand("cmdCode()");
-    }
-
-    private async void btnBreak_Click(object sender, EventArgs e) {
-        await RealCommand("cmdBreak()");
-    }
-
-    private async Task InsertRealTarget(bool image) {
-        if (!CanRunScript())
+    private void btnBullet_Click(object sender, EventArgs e) {
+        if (_mode != ViewMode.Real)
             return;
+        rtbPreview.SelectionBullet = !rtbPreview.SelectionBullet;
+        rtbPreview.Focus();
+    }
 
-        var selected = "";
-        var response = await webPreview.EvaluateScriptAsync("selectionText()");
-        if (response.Success && response.Result is string text)
-            selected = text;
+    private void btnLink_Click(object sender, EventArgs e) {
+        InsertRichTarget(false);
+    }
 
+    private void btnImage_Click(object sender, EventArgs e) {
+        InsertRichTarget(true);
+    }
+
+    private void btnCode_Click(object sender, EventArgs e) {
+        if (_mode != ViewMode.Real)
+            return;
+        rtbPreview.SelectionFont = new Font("Consolas", 11f, FontStyle.Regular);
+        rtbPreview.SelectionBackColor = Color.FromArgb(243, 243, 243);
+        rtbPreview.SelectionColor = Color.Black;
+        rtbPreview.Focus();
+    }
+
+    private void btnBreak_Click(object sender, EventArgs e) {
+        if (_mode != ViewMode.Real)
+            return;
+        rtbPreview.SelectedRtf = "{\\rtf1\\ansi\\line}";
+        rtbPreview.Focus();
+    }
+
+    private void ToggleStyle(FontStyle style) {
+        if (_mode != ViewMode.Real)
+            return;
+        var current = rtbPreview.SelectionFont;
+        var family = current?.FontFamily.Name ?? "Segoe UI";
+        var size = current?.Size ?? 12f;
+        var next = current is null ? style : current.Style ^ style;
+        rtbPreview.SelectionFont = new Font(family, size, next);
+        rtbPreview.Focus();
+    }
+
+    private void FormatParagraph(float size, FontStyle style, bool bullet) {
+        if (_mode != ViewMode.Real)
+            return;
+        var text = rtbPreview.Text;
+        var start = rtbPreview.SelectionStart;
+        var length = rtbPreview.SelectionLength;
+        var from = LineStart(text, start);
+        var endIndex = length == 0 ? start : start + length;
+        if (length > 0 && endIndex > from && LineStart(text, endIndex) == endIndex)
+            endIndex--;
+        var to = LineEnd(text, endIndex);
+        rtbPreview.Select(from, Math.Max(0, to - from));
+        rtbPreview.SelectionBullet = bullet;
+        rtbPreview.SelectionBackColor = Color.White;
+        rtbPreview.SelectionColor = Color.Black;
+        rtbPreview.SelectionFont = new Font("Segoe UI", size, style);
+        rtbPreview.Focus();
+    }
+
+    private static int LineStart(string text, int index) {
+        var i = Math.Clamp(index, 0, text.Length);
+        var newline = text.LastIndexOf('\n', Math.Max(0, i - 1));
+        return newline < 0 ? 0 : newline + 1;
+    }
+
+    private static int LineEnd(string text, int index) {
+        var from = Math.Clamp(index, 0, text.Length);
+        var newline = text.IndexOf('\n', from);
+        return newline < 0 ? text.Length : newline;
+    }
+
+    private void InsertRichTarget(bool image) {
+        if (_mode != ViewMode.Real)
+            return;
+        var selected = rtbPreview.SelectedText.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
         var picked = FormMarkdownTarget.Prompt(this, image, selected);
+        rtbPreview.Focus();
         if (picked is null)
             return;
-
-        var command = image ? "cmdImage" : "cmdLink";
-        var script = command
-            + "(" + JsonSerializer.Serialize(picked.Value.Definition)
-            + "," + JsonSerializer.Serialize(picked.Value.Url) + ")";
-        await RealCommand(script);
-    }
-
-    private bool CanRunScript() {
-        return _mode == ViewMode.Real
-            && webPreview.IsBrowserInitialized
-            && webPreview.CanExecuteJavascriptInMainFrame;
-    }
-
-    private async Task RealCommand(string script) {
-        if (!CanRunScript())
-            return;
-
-        await webPreview.EvaluateScriptAsync(script);
-        if (_mode == ViewMode.Real)
-            webPreview.Focus();
-    }
-
-    private async Task SetEditable(bool on) {
-        if (!webPreview.IsBrowserInitialized || !webPreview.CanExecuteJavascriptInMainFrame)
-            return;
-
-        await webPreview.EvaluateScriptAsync(on ? "setEditable(true)" : "setEditable(false)");
-        if (on && _mode == ViewMode.Real)
-            webPreview.Focus();
-    }
-
-    private async Task FlushReal() {
-        if (!CanRunScript())
-            return;
-
-        var response = await webPreview.EvaluateScriptAsync("flushMarkdown()");
-        if (response.Success && response.Result is string markdown)
-            ApplyLiveMarkdown(markdown);
-    }
-
-    internal void ApplyLiveMarkdown(string? markdown) {
-        if (markdown is null || IsDisposed || _mode != ViewMode.Real)
-            return;
-
-        var text = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", "\r\n");
-        if (txtEditor.Text == text)
-            return;
-
-        txtEditor.Text = text;
-    }
-
-    internal void SaveFromEditor() {
-        if (IsDisposed)
-            return;
-        TrySave();
-    }
-
-    internal void LoadFromEditor() {
-        if (IsDisposed)
-            return;
-        btnLoad.PerformClick();
+        var snippet = image
+            ? RichMarkdown.ImageRtf(picked.Value.Definition, picked.Value.Url)
+            : RichMarkdown.LinkRtf(picked.Value.Definition, picked.Value.Url);
+        rtbPreview.SelectedRtf = snippet;
     }
 
     private void pnlEditor_MouseDown(object sender, MouseEventArgs e) {
@@ -510,146 +477,45 @@ public partial class FormMain : Form {
         btnSave.Enabled = txtEditor.Text != _savedText;
     }
 
-    private void EnsurePreview() {
-        EnsureRealBridge();
-        if (_previewReady || _previewInitStarted)
+    private void rtbPreview_TextChanged(object sender, EventArgs e) {
+        if (_suppressRich || _mode != ViewMode.Real)
             return;
+        ApplyLiveMarkdown(RichMarkdown.FromRtf(rtbPreview.Rtf));
+    }
 
-        _previewInitStarted = true;
-        if (CefHost.StartError is not null || Cef.IsInitialized != true) {
-            ShowPreviewError(CefHost.StartError ?? "Preview could not start.");
+    private void rtbPreview_LinkClicked(object sender, LinkClickedEventArgs e) {
+        if (_mode != ViewMode.Preview || string.IsNullOrWhiteSpace(e.LinkText))
             return;
-        }
-
         try {
-            webPreview.RequestHandler = new PreviewRequestHandler();
-            webPreview.BackColor = Color.White;
-            webPreview.Visible = false;
-            CreatePreviewHandle();
-            if (webPreview.IsBrowserInitialized)
-                FinishPreviewInit();
-            else
-                webPreview.IsBrowserInitializedChanged += OnBrowserInitialized;
+            Process.Start(new ProcessStartInfo(e.LinkText) { UseShellExecute = true });
         }
-        catch (Exception ex) {
-            ShowPreviewError(ex.Message);
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) {
         }
     }
 
-    private void OnBrowserInitialized(object? sender, EventArgs e) {
-        if (!webPreview.IsBrowserInitialized)
-            return;
-
-        if (InvokeRequired) {
-            BeginInvoke(FinishPreviewInit);
-            return;
+    private void RenderRich() {
+        _suppressRich = true;
+        try {
+            rtbPreview.Rtf = RichMarkdown.ToRtf(txtEditor.Text);
+            rtbPreview.BackColor = Color.White;
         }
-
-        FinishPreviewInit();
-    }
-
-    private void CreatePreviewHandle() {
-        if (webPreview.IsHandleCreated)
-            return;
-
-        typeof(Control).GetMethod(
-            "CreateControl",
-            BindingFlags.Instance | BindingFlags.NonPublic,
-            null,
-            new[] { typeof(bool) },
-            null)!.Invoke(webPreview, new object[] { true });
-    }
-
-    private void FinishPreviewInit() {
-        _previewReady = true;
-        lblPreview.Visible = false;
-        webPreview.LoadingStateChanged += OnEmptyPreviewLoaded;
-        webPreview.LoadHtml(MarkdownPreview.ToDocument(""), MarkdownPreview.PreviewUrl);
-    }
-
-    private void OnEmptyPreviewLoaded(object? sender, LoadingStateChangedEventArgs e) {
-        if (e.IsLoading) {
-            _emptyPreviewStarted = true;
-            return;
+        finally {
+            _suppressRich = false;
         }
+    }
 
-        if (!_emptyPreviewStarted)
+    private void FlushRich() {
+        if (_mode != ViewMode.Real)
             return;
+        ApplyLiveMarkdown(RichMarkdown.FromRtf(rtbPreview.Rtf));
+    }
 
-        webPreview.LoadingStateChanged -= OnEmptyPreviewLoaded;
-        _emptyPreviewLoaded = true;
-        if (InvokeRequired) {
-            BeginInvoke(ShowLoadedPreview);
+    private void ApplyLiveMarkdown(string? markdown) {
+        if (markdown is null || IsDisposed)
             return;
-        }
-
-        ShowLoadedPreview();
-    }
-
-    private void ShowLoadedPreview() {
-        if (_mode != ViewMode.Edit && !lblPreview.Visible)
-            webPreview.Visible = true;
-
-        RenderPreview();
-        if (_mode == ViewMode.Real)
-            _ = SetEditable(true);
-    }
-
-    private void EnsureRealBridge() {
-        if (_realBridge is not null)
+        var text = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", "\r\n");
+        if (txtEditor.Text == text)
             return;
-
-        _realBridge = new RealEditorBridge(this);
-        webPreview.JavascriptObjectRepository.Settings.LegacyBindingEnabled = true;
-        webPreview.JavascriptObjectRepository.Register("rsaReal", _realBridge, BindingOptions.DefaultBinder);
-    }
-
-    private void ShowPreviewError(string message) {
-        webPreview.Visible = false;
-        lblPreview.Visible = true;
-        lblPreview.Text = "Preview could not start."
-            + Environment.NewLine + Environment.NewLine + message;
-    }
-
-    private void RenderPreview() {
-        if (!_previewReady || !webPreview.IsBrowserInitialized)
-            return;
-
-        var body = MarkdownPreview.ToBody(txtEditor.Text);
-        if (_emptyPreviewLoaded && webPreview.CanExecuteJavascriptInMainFrame) {
-            webPreview.ExecuteScriptAsync("document.body.innerHTML = " + JsonSerializer.Serialize(body) + ";");
-            return;
-        }
-
-        webPreview.LoadHtml(MarkdownPreview.ToDocument(txtEditor.Text), MarkdownPreview.PreviewUrl);
-    }
-}
-
-public sealed class RealEditorBridge {
-    private readonly FormMain _form;
-
-    public RealEditorBridge(FormMain form) {
-        _form = form;
-    }
-
-    public void SyncMarkdown(string markdown) {
-        Post(() => _form.ApplyLiveMarkdown(markdown));
-    }
-
-    public void Save() {
-        Post(() => _form.SaveFromEditor());
-    }
-
-    public void Load() {
-        Post(() => _form.LoadFromEditor());
-    }
-
-    private void Post(Action action) {
-        if (_form.IsDisposed)
-            return;
-        if (_form.InvokeRequired)
-            _form.BeginInvoke(action);
-        else
-            action();
+        txtEditor.Text = text;
     }
 }

@@ -1,6 +1,4 @@
-﻿using CefSharp.WinForms;
-
-namespace rsaReader;
+﻿namespace rsaReader;
 
 partial class FormMain {
     #region Windows Form Designer generated code
@@ -32,8 +30,7 @@ partial class FormMain {
         this.pnlEditor = new Panel();
         this.txtEditor = new EditorTextBox();
         this.pnlPreview = new Panel();
-        this.webPreview = new ChromiumWebBrowser();
-        this.lblPreview = new Label();
+        this.rtbPreview = new RichTextBox();
         this.pnlChrome.SuspendLayout();
         this.pnlBar.SuspendLayout();
         this.pnlSave.SuspendLayout();
@@ -159,7 +156,7 @@ partial class FormMain {
         // 
         // btnBold
         // 
-        this.btnBold.Font = new Font(this.btnBold.Font, FontStyle.Bold);
+        this.btnBold.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         this.btnBold.Location = new Point(8, 6);
         this.btnBold.Name = "btnBold";
         this.btnBold.Size = new Size(40, 28);
@@ -215,7 +212,7 @@ partial class FormMain {
         this.btnImage.Name = "btnImage";
         this.btnImage.Size = new Size(40, 28);
         this.btnImage.TabIndex = 5;
-        this.btnImage.Text = "\uE16C";
+        this.btnImage.Text = "";
         this.btnImage.UseVisualStyleBackColor = true;
         this.btnImage.Click += this.btnImage_Click;
         // 
@@ -242,11 +239,17 @@ partial class FormMain {
         // splitView
         // 
         this.splitView.Dock = DockStyle.Fill;
-        this.splitView.Location = new Point(0, 80);
+        this.splitView.Location = new Point(0, 0);
         this.splitView.Name = "splitView";
+        // 
+        // splitView.Panel1
+        // 
         this.splitView.Panel1.Controls.Add(this.pnlEditor);
+        // 
+        // splitView.Panel2
+        // 
         this.splitView.Panel2.Controls.Add(this.pnlPreview);
-        this.splitView.Size = new Size(1037, 568);
+        this.splitView.Size = new Size(1037, 648);
         this.splitView.SplitterDistance = 500;
         this.splitView.TabIndex = 0;
         // 
@@ -258,7 +261,7 @@ partial class FormMain {
         this.pnlEditor.Location = new Point(0, 0);
         this.pnlEditor.Name = "pnlEditor";
         this.pnlEditor.Padding = new Padding(8, 4, 8, 8);
-        this.pnlEditor.Size = new Size(500, 568);
+        this.pnlEditor.Size = new Size(500, 648);
         this.pnlEditor.TabIndex = 0;
         this.pnlEditor.MouseDown += this.pnlEditor_MouseDown;
         // 
@@ -275,7 +278,7 @@ partial class FormMain {
         this.txtEditor.Multiline = true;
         this.txtEditor.Name = "txtEditor";
         this.txtEditor.ScrollBars = ScrollBars.Both;
-        this.txtEditor.Size = new Size(484, 556);
+        this.txtEditor.Size = new Size(484, 636);
         this.txtEditor.TabIndex = 0;
         this.txtEditor.WordWrap = false;
         this.txtEditor.TextChanged += this.txtEditor_TextChanged;
@@ -283,34 +286,31 @@ partial class FormMain {
         // pnlPreview
         // 
         this.pnlPreview.BackColor = Color.White;
-        this.pnlPreview.Controls.Add(this.webPreview);
-        this.pnlPreview.Controls.Add(this.lblPreview);
+        this.pnlPreview.Controls.Add(this.rtbPreview);
         this.pnlPreview.Dock = DockStyle.Fill;
         this.pnlPreview.Enabled = false;
         this.pnlPreview.Location = new Point(0, 0);
         this.pnlPreview.Name = "pnlPreview";
-        this.pnlPreview.Size = new Size(533, 568);
+        this.pnlPreview.Padding = new Padding(16, 12, 16, 16);
+        this.pnlPreview.Size = new Size(533, 648);
         this.pnlPreview.TabIndex = 1;
         // 
-        // webPreview
+        // rtbPreview
         // 
-        this.webPreview.ActivateBrowserOnCreation = false;
-        this.webPreview.Dock = DockStyle.Fill;
-        this.webPreview.Location = new Point(0, 0);
-        this.webPreview.Name = "webPreview";
-        this.webPreview.Size = new Size(533, 568);
-        this.webPreview.TabIndex = 2;
-        this.webPreview.Visible = false;
-        // 
-        // lblPreview
-        // 
-        this.lblPreview.Dock = DockStyle.Fill;
-        this.lblPreview.Location = new Point(0, 0);
-        this.lblPreview.Name = "lblPreview";
-        this.lblPreview.Size = new Size(533, 568);
-        this.lblPreview.TabIndex = 1;
-        this.lblPreview.TextAlign = ContentAlignment.MiddleCenter;
-        this.lblPreview.Visible = false;
+        this.rtbPreview.BackColor = Color.White;
+        this.rtbPreview.BorderStyle = BorderStyle.None;
+        this.rtbPreview.DetectUrls = false;
+        this.rtbPreview.Dock = DockStyle.Fill;
+        this.rtbPreview.Font = new Font("Segoe UI", 12F);
+        this.rtbPreview.HideSelection = false;
+        this.rtbPreview.Location = new Point(16, 12);
+        this.rtbPreview.Name = "rtbPreview";
+        this.rtbPreview.ReadOnly = true;
+        this.rtbPreview.Size = new Size(501, 620);
+        this.rtbPreview.TabIndex = 0;
+        this.rtbPreview.Text = "";
+        this.rtbPreview.LinkClicked += this.rtbPreview_LinkClicked;
+        this.rtbPreview.TextChanged += this.rtbPreview_TextChanged;
         // 
         // FormMain
         // 
@@ -362,6 +362,5 @@ partial class FormMain {
     private Panel pnlEditor;
     private EditorTextBox txtEditor;
     private Panel pnlPreview;
-    private Label lblPreview;
-    private ChromiumWebBrowser webPreview;
+    private RichTextBox rtbPreview;
 }

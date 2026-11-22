@@ -21,26 +21,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CefSharp.WinForms.NETCore" Version="152.0.100" />
-    <PackageReference Include="chromiumembeddedframework.runtime.win-x64" Version="152.0.10" />
-    <PackageReference Include="Markdig" Version="1.4.0" />
+    <PackageReference Include="Markdig" Version="1.6.0" />
   </ItemGroup>
-
-  <Target Name="KeepEnglishCefLocale" BeforeTargets="GetCopyToPublishDirectoryItems;AssignTargetPaths">
-    <ItemGroup>
-      <Content Remove="@(Content)" Condition="$([System.String]::Copy('%(Link)').StartsWith('locales\')) and '%(Filename)' != 'en-US'" />
-    </ItemGroup>
-  </Target>
-
-  <Target Name="CopyCefRuntime" AfterTargets="Build">
-    <CallTarget Targets="CefRedist64CopyResources" />
-  </Target>
-
-  <Target Name="CopyCefRuntimePublish" AfterTargets="Publish" Condition="'$(PublishSingleFile)' != 'true'">
-    <PropertyGroup>
-      <CefRedist64TargetDir>$(PublishDir)</CefRedist64TargetDir>
-    </PropertyGroup>
-    <CallTarget Targets="CefRedist64CopyResources" />
-  </Target>
 
 </Project>

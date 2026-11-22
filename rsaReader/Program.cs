@@ -1,31 +1,22 @@
 namespace rsaReader;
 
 internal static class Program {
-    /// <summary>
-    ///  The main entry point for the application.
-    /// </summary>
     [STAThread]
     static int Main(string[] args) {
-        var subprocess = CefSharp.BrowserSubprocess.SelfHost.Main(args);
-        if (subprocess >= 0)
-            return subprocess;
-
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
 
         try {
             string? decryptPassword;
             try {
                 decryptPassword = AccessGate.Acquire();
-            }
-            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException) {
+            } catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException) {
                 MessageBox.Show(ex.Message, "rsaReader", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 0;
             }
 
-            if (decryptPassword is null)
+            if (decryptPassword is null) {
                 return 0;
+            }
 
             AppSession.SetDecryptPassword(decryptPassword);
             var documentPath = args.Length > 0 ? args[0] : null;
@@ -48,14 +39,14 @@ internal static class Program {
                 }
             }
 
-            CefHost.Start();
             var main = new FormMain(documentPath, data, keyHex, aesKeyHex);
             main.ShowPrepared();
             Application.Run(main);
-            return 0;
+        } catch {
+            //
         }
-        finally {
-            CefHost.Stop();
-        }
+
+        return 0;
     }
 }
+
