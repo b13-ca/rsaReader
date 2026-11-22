@@ -41,6 +41,7 @@ internal static class RichMarkdown {
 
     private static string BuildRtf(string? markdown, bool dark) {
         var text = markdown ?? "";
+        _note = text;
         var source = KeepVisibleBreaks(text, out var origin);
         _origin = origin;
         _originLength = text.Length;
@@ -63,16 +64,44 @@ internal static class RichMarkdown {
         rtf.Append("{\\fonttbl{\\f0\\fnil\\fcharset0 Segoe UI;}{\\f1\\fnil\\fcharset0 Consolas;}}");
         rtf.Append("{\\colortbl ;\\red11\\green87\\blue208;").Append(codeBack).Append(";}");
         rtf.Append("\\viewkind4\\uc1");
-        foreach (var block in document)
+        var covered = 0;
+        var any = false;
+        foreach (var block in document) {
+            var start = block.Span.IsEmpty ? covered : BlockStart(block);
+            EmitEmptyLines(rtf, any ? covered : 0, start);
             RenderBlock(rtf, map, block, 0);
-        if (document.Count == 0)
+            if (!block.Span.IsEmpty)
+                covered = BlockEnd(block);
+            any = true;
+        }
+
+        EmitEmptyLines(rtf, covered, _note.Length);
+        if (!any && _note.IndexOf('\n') < 0)
             rtf.Append("\\pard\\f0\\fs24\\par");
         rtf.Append('}');
         return rtf.ToString();
     }
 
+    private static void EmitEmptyLines(StringBuilder rtf, int from, int to) {
+        if (from < 0)
+            from = 0;
+        if (to > _note.Length)
+            to = _note.Length;
+        for (var i = from; i < to; i++) {
+            if (_note[i] != '\n')
+                continue;
+            if (i > 0 && _note[i - 1] != '\n')
+                continue;
+            if (_carets?.HasBreak(i) == true)
+                continue;
+            rtf.Append("\\pard\\f0\\fs24\\par");
+            _carets?.Add('\n', i, false);
+        }
+    }
+
     private static int[] _origin = Array.Empty<int>();
     private static int _originLength;
+    private static string _note = "";
     private static CaretMap? _carets;
     private static CaretMap _map = new();
 
@@ -281,10 +310,13 @@ internal static class RichMarkdown {
                 WriteSpan(rtf, literal.Content.ToString(), literal.Span);
                 break;
             case LineBreakInline line:
-                if (line.IsHard)
-                    AppendHardBreak(rtf, Here(line.Span.End + 1));
+                var at = Here(line.IsHard && !line.Span.IsEmpty ? line.Span.End : line.Span.Start);
+                if (line.IsHard && !Draws(line.NextSibling) && EmptyLineFollows(at))
+                    AppendParagraphBreak(rtf, at);
+                else if (line.IsHard)
+                    AppendHardBreak(rtf, at);
                 else
-                    WriteChar(rtf, '\n', Here(line.Span.Start));
+                    WriteChar(rtf, '\n', at);
                 break;
             case CodeInline code:
                 rtf.Append("\\f1\\fs22\\highlight2\\cb2 ");
@@ -507,6 +539,36 @@ internal static class RichMarkdown {
         _carets?.Add('\n', index, false, true);
     }
 
+    private static void AppendParagraphBreak(StringBuilder rtf, int index) {
+        rtf.Append("\\par");
+        _carets?.Add('\n', index, false);
+    }
+
+    private static bool EmptyLineFollows(int newlineIndex) {
+        var next = newlineIndex + 1;
+        return next < _note.Length && _note[next] == '\n';
+    }
+
+    private static bool Draws(Inline? inline) {
+        for (var child = inline; child is not null; child = child.NextSibling) {
+            switch (child) {
+                case LiteralInline literal:
+                    foreach (var c in literal.Content.ToString())
+                        if (c != '\u200B' && c != '\r' && !char.IsWhiteSpace(c))
+                            return true;
+                    break;
+                case ContainerInline container:
+                    if (Draws(container.FirstChild))
+                        return true;
+                    break;
+                default:
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
     private static void AppendGap(StringBuilder rtf, int? gap, int index) {
         if (gap is int count) {
             var label = "gap:" + count;
@@ -644,6 +706,15 @@ internal static class RichMarkdown {
             _pendingIndex = index;
         }
 
+        public bool HasBreak(int index) {
+            if (_pending && _pendingIndex == index)
+                return true;
+            foreach (var slot in _slots)
+                if (!slot.Hidden && slot.Char == '\n' && slot.Index == index)
+                    return true;
+            return false;
+        }
+
         private void Flush() {
             if (!_pending)
                 return;
@@ -657,27 +728,108 @@ internal static class RichMarkdown {
             caret = Math.Clamp(caret, 0, actual.Length);
             if (Same(actual))
                 return caret >= _slots.Count ? markdownLength : _slots[caret].Index;
-            var slot = Align(actual, caret);
-            if (caret >= actual.Length || slot >= _slots.Count)
-                return markdownLength;
-            return _slots[slot].Index;
+            return SourceOnLine(LineOf(actual, caret), ColumnOf(actual, caret), markdownLength);
         }
 
         public int ControlCaret(string actual, int markdownIndex) {
-            var predicted = _slots.Count;
-            for (var i = 0; i < _slots.Count; i++) {
-                var slot = _slots[i];
-                if (slot.Hidden || slot.Hard)
+            markdownIndex = Math.Clamp(markdownIndex, 0, _note.Length);
+            var line = LineOf(_note, markdownIndex);
+            return PlaceOnLine(actual, line, VisibleColumn(markdownIndex, line));
+        }
+
+        private int VisibleColumn(int markdownIndex, int line) {
+            var column = 0;
+            foreach (var slot in _slots) {
+                if (slot.Hidden || slot.Char == '\n' || slot.Char == '\r')
                     continue;
-                if (slot.Index >= markdownIndex) {
-                    predicted = i;
+                if (LineOf(_note, slot.Index) != line)
+                    continue;
+                if (slot.Index >= markdownIndex)
                     break;
-                }
+                column++;
             }
 
-            if (Same(actual))
-                return Math.Min(predicted, actual.Length);
-            return MapPredicted(actual, predicted);
+            return column;
+        }
+
+        private int SourceOnLine(int line, int column, int markdownLength) {
+            var index = 0;
+            var current = 0;
+            while (index < _note.Length && current < line) {
+                if (_note[index] == '\n')
+                    current++;
+                index++;
+            }
+
+            if (current < line)
+                return markdownLength;
+            var seen = 0;
+            foreach (var slot in _slots) {
+                if (slot.Hidden || slot.Char == '\n' || slot.Char == '\r')
+                    continue;
+                if (LineOf(_note, slot.Index) != line)
+                    continue;
+                if (seen == column)
+                    return slot.Index;
+                seen++;
+            }
+
+            var end = _note.IndexOf('\n', index);
+            return end < 0 ? _note.Length : end;
+        }
+
+        private static int PlaceOnLine(string actual, int line, int column) {
+            var i = 0;
+            var current = 0;
+            while (i < actual.Length && current < line) {
+                if (actual[i] == '\n')
+                    current++;
+                else if (actual[i] == '\r') {
+                    current++;
+                    if (i + 1 < actual.Length && actual[i + 1] == '\n')
+                        i++;
+                }
+
+                i++;
+            }
+
+            var col = 0;
+            while (i < actual.Length && actual[i] != '\n' && actual[i] != '\r') {
+                if (col == column)
+                    return i;
+                col++;
+                i++;
+            }
+
+            return i;
+        }
+
+        private static int ColumnOf(string text, int index) {
+            var start = index <= 0 ? 0 : text.LastIndexOf('\n', Math.Min(index, text.Length) - 1) + 1;
+            var column = 0;
+            for (var i = start; i < index && i < text.Length; i++) {
+                if (text[i] == '\n' || text[i] == '\r')
+                    break;
+                column++;
+            }
+
+            return column;
+        }
+
+        private static int LineOf(string text, int index) {
+            if (index < 0)
+                return 0;
+            if (index > text.Length)
+                index = text.Length;
+            var line = 0;
+            for (var i = 0; i < index; i++) {
+                if (text[i] == '\n')
+                    line++;
+                else if (text[i] == '\r' && (i + 1 >= text.Length || text[i + 1] != '\n'))
+                    line++;
+            }
+
+            return line;
         }
 
         private bool Same(string actual) {
@@ -687,72 +839,6 @@ internal static class RichMarkdown {
                 if (actual[i] != _slots[i].Char)
                     return false;
             return true;
-        }
-
-        private int Align(string actual, int caret) {
-            var actualAt = 0;
-            var slot = 0;
-            while (actualAt < caret && actualAt < actual.Length && slot < _slots.Count) {
-                if (actual[actualAt] == _slots[slot].Char) {
-                    actualAt++;
-                    slot++;
-                    continue;
-                }
-
-                var nextSlot = FindSlot(slot + 1, actual[actualAt]);
-                var nextActual = FindChar(actual, actualAt + 1, _slots[slot].Char);
-                if (nextSlot >= 0 && (nextActual < 0 || nextSlot - slot <= nextActual - actualAt))
-                    slot = nextSlot;
-                else if (nextActual >= 0)
-                    actualAt = nextActual;
-                else {
-                    actualAt++;
-                    slot++;
-                }
-            }
-
-            return slot;
-        }
-
-        private int MapPredicted(string actual, int predicted) {
-            var actualAt = 0;
-            var slot = 0;
-            while (slot < predicted && slot < _slots.Count && actualAt < actual.Length) {
-                if (actual[actualAt] == _slots[slot].Char) {
-                    actualAt++;
-                    slot++;
-                    continue;
-                }
-
-                var nextSlot = FindSlot(slot + 1, actual[actualAt]);
-                var nextActual = FindChar(actual, actualAt + 1, _slots[slot].Char);
-                if (nextSlot >= 0 && nextSlot <= predicted && (nextActual < 0 || nextSlot - slot <= nextActual - actualAt))
-                    slot = nextSlot;
-                else if (nextActual >= 0)
-                    actualAt = nextActual;
-                else {
-                    actualAt++;
-                    slot++;
-                }
-            }
-
-            return Math.Min(actualAt, actual.Length);
-        }
-
-        private int FindSlot(int start, char wanted) {
-            var end = Math.Min(_slots.Count, start + 32);
-            for (var i = start; i < end; i++)
-                if (_slots[i].Char == wanted)
-                    return i;
-            return -1;
-        }
-
-        private static int FindChar(string text, int start, char wanted) {
-            var end = Math.Min(text.Length, start + 32);
-            for (var i = start; i < end; i++)
-                if (text[i] == wanted)
-                    return i;
-            return -1;
         }
 
         private readonly record struct Slot(char Char, int Index, bool Hidden, bool Hard);
