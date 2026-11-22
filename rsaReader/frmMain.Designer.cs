@@ -15,7 +15,6 @@ partial class FormMain {
         this.btnSave = new Button();
         this.pnlModes = new Panel();
         this.btnEdit = new Button();
-        this.btnPreview = new Button();
         this.btnReal = new Button();
         this.pnlTools = new Panel();
         this.btnBold = new Button();
@@ -26,9 +25,6 @@ partial class FormMain {
         this.btnImage = new Button();
         this.btnCode = new Button();
         this.btnBreak = new Button();
-        this.splitView = new SplitContainer();
-        this.pnlEditor = new Panel();
-        this.txtEditor = new EditorTextBox();
         this.pnlPreview = new Panel();
         this.rtbPreview = new RichTextBox();
         this.pnlChrome.SuspendLayout();
@@ -36,11 +32,6 @@ partial class FormMain {
         this.pnlSave.SuspendLayout();
         this.pnlModes.SuspendLayout();
         this.pnlTools.SuspendLayout();
-        ((System.ComponentModel.ISupportInitialize)this.splitView).BeginInit();
-        this.splitView.Panel1.SuspendLayout();
-        this.splitView.Panel2.SuspendLayout();
-        this.splitView.SuspendLayout();
-        this.pnlEditor.SuspendLayout();
         this.pnlPreview.SuspendLayout();
         this.SuspendLayout();
         // 
@@ -98,12 +89,11 @@ partial class FormMain {
         // pnlModes
         // 
         this.pnlModes.Controls.Add(this.btnEdit);
-        this.pnlModes.Controls.Add(this.btnPreview);
         this.pnlModes.Controls.Add(this.btnReal);
         this.pnlModes.Dock = DockStyle.Right;
-        this.pnlModes.Location = new Point(757, 0);
+        this.pnlModes.Location = new Point(853, 0);
         this.pnlModes.Name = "pnlModes";
-        this.pnlModes.Size = new Size(280, 40);
+        this.pnlModes.Size = new Size(184, 40);
         this.pnlModes.TabIndex = 0;
         // 
         // btnEdit
@@ -116,22 +106,12 @@ partial class FormMain {
         this.btnEdit.UseVisualStyleBackColor = false;
         this.btnEdit.Click += this.btnEdit_Click;
         // 
-        // btnPreview
-        // 
-        this.btnPreview.Location = new Point(96, 6);
-        this.btnPreview.Name = "btnPreview";
-        this.btnPreview.Size = new Size(88, 28);
-        this.btnPreview.TabIndex = 1;
-        this.btnPreview.Text = "Preview";
-        this.btnPreview.UseVisualStyleBackColor = false;
-        this.btnPreview.Click += this.btnPreview_Click;
-        // 
         // btnReal
         // 
-        this.btnReal.Location = new Point(192, 6);
+        this.btnReal.Location = new Point(96, 6);
         this.btnReal.Name = "btnReal";
         this.btnReal.Size = new Size(80, 28);
-        this.btnReal.TabIndex = 2;
+        this.btnReal.TabIndex = 1;
         this.btnReal.Text = "Real";
         this.btnReal.UseVisualStyleBackColor = false;
         this.btnReal.Click += this.btnReal_Click;
@@ -236,80 +216,33 @@ partial class FormMain {
         this.btnBreak.UseVisualStyleBackColor = true;
         this.btnBreak.Click += this.btnBreak_Click;
         // 
-        // splitView
-        // 
-        this.splitView.Dock = DockStyle.Fill;
-        this.splitView.Location = new Point(0, 0);
-        this.splitView.Name = "splitView";
-        // 
-        // splitView.Panel1
-        // 
-        this.splitView.Panel1.Controls.Add(this.pnlEditor);
-        // 
-        // splitView.Panel2
-        // 
-        this.splitView.Panel2.Controls.Add(this.pnlPreview);
-        this.splitView.Size = new Size(1037, 648);
-        this.splitView.SplitterDistance = 500;
-        this.splitView.TabIndex = 0;
-        // 
-        // pnlEditor
-        // 
-        this.pnlEditor.BackColor = SystemColors.Window;
-        this.pnlEditor.Controls.Add(this.txtEditor);
-        this.pnlEditor.Dock = DockStyle.Fill;
-        this.pnlEditor.Location = new Point(0, 0);
-        this.pnlEditor.Name = "pnlEditor";
-        this.pnlEditor.Padding = new Padding(8, 4, 8, 8);
-        this.pnlEditor.Size = new Size(500, 648);
-        this.pnlEditor.TabIndex = 0;
-        this.pnlEditor.MouseDown += this.pnlEditor_MouseDown;
-        // 
-        // txtEditor
-        // 
-        this.txtEditor.AcceptsReturn = true;
-        this.txtEditor.AcceptsTab = true;
-        this.txtEditor.BorderStyle = BorderStyle.None;
-        this.txtEditor.Dock = DockStyle.Fill;
-        this.txtEditor.Font = new Font("Consolas", 11F);
-        this.txtEditor.HideSelection = false;
-        this.txtEditor.Location = new Point(8, 4);
-        this.txtEditor.MaxLength = 0;
-        this.txtEditor.Multiline = true;
-        this.txtEditor.Name = "txtEditor";
-        this.txtEditor.ScrollBars = ScrollBars.Both;
-        this.txtEditor.Size = new Size(484, 636);
-        this.txtEditor.TabIndex = 0;
-        this.txtEditor.WordWrap = false;
-        this.txtEditor.TextChanged += this.txtEditor_TextChanged;
-        // 
         // pnlPreview
         // 
         this.pnlPreview.BackColor = Color.White;
         this.pnlPreview.Controls.Add(this.rtbPreview);
         this.pnlPreview.Dock = DockStyle.Fill;
-        this.pnlPreview.Enabled = false;
         this.pnlPreview.Location = new Point(0, 0);
         this.pnlPreview.Name = "pnlPreview";
         this.pnlPreview.Padding = new Padding(16, 12, 16, 16);
-        this.pnlPreview.Size = new Size(533, 648);
-        this.pnlPreview.TabIndex = 1;
+        this.pnlPreview.Size = new Size(1037, 648);
+        this.pnlPreview.TabIndex = 0;
         // 
         // rtbPreview
         // 
+        this.rtbPreview.AcceptsTab = true;
+        this.rtbPreview.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         this.rtbPreview.BackColor = Color.White;
         this.rtbPreview.BorderStyle = BorderStyle.None;
         this.rtbPreview.DetectUrls = false;
-        this.rtbPreview.Dock = DockStyle.Fill;
-        this.rtbPreview.Font = new Font("Segoe UI", 12F);
+        this.rtbPreview.Font = new Font("Consolas", 11F);
         this.rtbPreview.HideSelection = false;
-        this.rtbPreview.Location = new Point(16, 12);
+        this.rtbPreview.Location = new Point(12, 89);
         this.rtbPreview.Name = "rtbPreview";
-        this.rtbPreview.ReadOnly = true;
-        this.rtbPreview.Size = new Size(501, 620);
+        this.rtbPreview.Size = new Size(1013, 550);
         this.rtbPreview.TabIndex = 0;
         this.rtbPreview.Text = "";
-        this.rtbPreview.LinkClicked += this.rtbPreview_LinkClicked;
+        this.rtbPreview.WordWrap = false;
+        this.rtbPreview.KeyDown += this.rtbPreview_KeyDown;
         this.rtbPreview.TextChanged += this.rtbPreview_TextChanged;
         // 
         // FormMain
@@ -318,7 +251,7 @@ partial class FormMain {
         this.AutoScaleMode = AutoScaleMode.Font;
         this.ClientSize = new Size(1037, 648);
         this.Controls.Add(this.pnlChrome);
-        this.Controls.Add(this.splitView);
+        this.Controls.Add(this.pnlPreview);
         this.MinimumSize = new Size(720, 480);
         this.Name = "FormMain";
         this.StartPosition = FormStartPosition.CenterScreen;
@@ -328,12 +261,6 @@ partial class FormMain {
         this.pnlSave.ResumeLayout(false);
         this.pnlModes.ResumeLayout(false);
         this.pnlTools.ResumeLayout(false);
-        this.splitView.Panel1.ResumeLayout(false);
-        this.splitView.Panel2.ResumeLayout(false);
-        ((System.ComponentModel.ISupportInitialize)this.splitView).EndInit();
-        this.splitView.ResumeLayout(false);
-        this.pnlEditor.ResumeLayout(false);
-        this.pnlEditor.PerformLayout();
         this.pnlPreview.ResumeLayout(false);
         this.ResumeLayout(false);
     }
@@ -347,7 +274,6 @@ partial class FormMain {
     private Button btnSave;
     private Panel pnlModes;
     private Button btnEdit;
-    private Button btnPreview;
     private Button btnReal;
     private Panel pnlTools;
     private Button btnBold;
@@ -358,9 +284,6 @@ partial class FormMain {
     private Button btnImage;
     private Button btnCode;
     private Button btnBreak;
-    private SplitContainer splitView;
-    private Panel pnlEditor;
-    private EditorTextBox txtEditor;
     private Panel pnlPreview;
     private RichTextBox rtbPreview;
 }

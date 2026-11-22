@@ -1,11 +1,10 @@
-using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace rsaReader;
 
 public partial class FormMain : Form {
     private enum ViewMode {
         Edit,
-        Preview,
         Real
     }
 
@@ -13,10 +12,15 @@ public partial class FormMain : Form {
     private string? _documentPath;
     private string? _keyHex;
     private string? _aesKeyHex;
+    private string _markdown = "";
     private string _savedText = "";
-    private bool _suppressDirty;
-    private bool _suppressRich;
-    private bool _preparedPreview;
+    private bool _suppress;
+    private bool _live;
+    private bool _realEdited;
+    private string _shownRtf = "";
+    private bool _openAsReal;
+    private readonly Font _plainFont = new("Consolas", 11F);
+    private readonly Font _richFont = new("Segoe UI", 12F);
 
     public FormMain() {
         InitializeComponent();
@@ -28,15 +32,15 @@ public partial class FormMain : Form {
         if (!string.IsNullOrWhiteSpace(documentPath) && data is not null) {
             _keyHex = keyHex;
             _aesKeyHex = aesKeyHex;
-            PreparePreview(data, documentPath);
+            PrepareDocument(data, documentPath);
         }
         else
             PrepareEditor(documentPath);
     }
 
     internal void ShowPrepared() {
-        if (_preparedPreview)
-            ShowPreview();
+        if (_openAsReal)
+            ShowReal();
         else
             ShowEditor();
     }
@@ -44,7 +48,7 @@ public partial class FormMain : Form {
     protected override void OnShown(EventArgs e) {
         base.OnShown(e);
         if (_mode == ViewMode.Edit)
-            FocusEditor(true);
+            rtbPreview.Focus();
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData) {
@@ -69,12 +73,12 @@ public partial class FormMain : Form {
     }
 
     private void btnSave_Click(object sender, EventArgs e) {
-        FlushRich();
+        Capture();
         TrySave();
     }
 
     private void btnLoad_Click(object sender, EventArgs e) {
-        FlushRich();
+        Capture();
         if (!ConfirmReplace())
             return;
 
@@ -125,20 +129,18 @@ public partial class FormMain : Form {
 
         _keyHex = opened.Value.KeyHex;
         _aesKeyHex = opened.Value.AesKeyHex;
-        PreparePreview(opened.Value.Data, path);
-        ShowPreview();
+        PrepareDocument(opened.Value.Data, path);
+        ShowReal();
     }
 
     private void OpenEmpty(string path) {
         _keyHex = null;
         _aesKeyHex = null;
-        _suppressDirty = true;
-        txtEditor.Clear();
+        _markdown = "";
         _savedText = "";
-        _suppressDirty = false;
         btnSave.Enabled = false;
         _documentPath = path;
-        _preparedPreview = false;
+        _openAsReal = false;
         Text = "rsaReader - " + Path.GetFileName(path);
         ShowEditor();
     }
@@ -228,7 +230,7 @@ public partial class FormMain : Form {
         }
 
         try {
-            RsaFile.Write(path, keyHex, aesKeyHex, txtEditor.Text);
+            RsaFile.Write(path, keyHex, aesKeyHex, _markdown);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException) {
             MessageBox.Show(this, ex.Message, "rsaReader", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -242,7 +244,7 @@ public partial class FormMain : Form {
     }
 
     private void MarkSaved(string path) {
-        _savedText = txtEditor.Text;
+        _savedText = _markdown;
         _documentPath = path;
         btnSave.Enabled = false;
         Text = "rsaReader - " + Path.GetFileName(path);
@@ -255,7 +257,7 @@ public partial class FormMain : Form {
     }
 
     private void PrepareEditor(string? path = null) {
-        _preparedPreview = false;
+        _openAsReal = false;
         if (string.IsNullOrWhiteSpace(path))
             return;
 
@@ -264,75 +266,54 @@ public partial class FormMain : Form {
         Text = "rsaReader - " + Path.GetFileName(path);
     }
 
-    private void PreparePreview(string markdown, string path) {
-        _preparedPreview = true;
-        _suppressDirty = true;
-        txtEditor.Text = markdown;
-        _savedText = txtEditor.Text;
+    private void PrepareDocument(string markdown, string path) {
+        _openAsReal = true;
+        _markdown = Normalize(markdown);
+        _savedText = _markdown;
         _documentPath = path;
         btnSave.Enabled = false;
         Text = "rsaReader - " + Path.GetFileName(path);
-        _suppressDirty = false;
     }
 
     private void btnEdit_Click(object sender, EventArgs e) {
         if (_mode == ViewMode.Edit)
             return;
-        FlushRich();
+        Capture();
         ShowEditor();
     }
 
-    private void btnPreview_Click(object sender, EventArgs e) {
-        if (_mode == ViewMode.Preview)
-            return;
-        FlushRich();
-        ShowPreview();
-    }
-
     private void btnReal_Click(object sender, EventArgs e) {
-        if (_mode != ViewMode.Real)
-            ShowReal();
-    }
-
-    private void ShowPreview() {
-        _mode = ViewMode.Preview;
-        ApplyMode();
-        RenderRich();
+        if (_mode == ViewMode.Real)
+            return;
+        Capture();
+        ShowReal();
     }
 
     private void ShowEditor() {
+        _live = false;
         _mode = ViewMode.Edit;
         ApplyMode();
-        FocusEditor(true);
+        ShowPlain();
+        _live = true;
+        rtbPreview.Focus();
     }
 
     private void ShowReal() {
-        var fromEdit = _mode == ViewMode.Edit;
+        _live = false;
         _mode = ViewMode.Real;
         ApplyMode();
-        if (fromEdit)
-            RenderRich();
+        ShowRich();
+        _realEdited = false;
+        _live = true;
         rtbPreview.Focus();
     }
 
     private void ApplyMode() {
         var edit = _mode == ViewMode.Edit;
         pnlTools.Enabled = _mode == ViewMode.Real;
-        pnlEditor.Enabled = edit;
-        pnlPreview.Enabled = !edit;
-        rtbPreview.ReadOnly = _mode != ViewMode.Real;
+        rtbPreview.ReadOnly = false;
         rtbPreview.BackColor = Color.White;
-        if (edit) {
-            splitView.Panel1Collapsed = false;
-            splitView.Panel2Collapsed = true;
-        }
-        else {
-            splitView.Panel2Collapsed = false;
-            splitView.Panel1Collapsed = true;
-        }
-
         StyleModeButton(btnEdit, edit);
-        StyleModeButton(btnPreview, _mode == ViewMode.Preview);
         StyleModeButton(btnReal, _mode == ViewMode.Real);
     }
 
@@ -341,25 +322,6 @@ public partial class FormMain : Form {
         button.FlatAppearance.BorderColor = active ? Color.FromArgb(70, 120, 180) : SystemColors.ControlDark;
         button.FlatAppearance.BorderSize = active ? 2 : 1;
         button.BackColor = active ? Color.FromArgb(220, 232, 246) : SystemColors.Control;
-    }
-
-    private void FocusEditor(bool moveToStart) {
-        txtEditor.Focus();
-        if (!moveToStart)
-            return;
-
-        txtEditor.SelectionStart = 0;
-        txtEditor.SelectionLength = 0;
-        if (IsHandleCreated)
-            BeginInvoke(ClearEditorSelection);
-    }
-
-    private void ClearEditorSelection() {
-        if (_mode != ViewMode.Edit)
-            return;
-
-        txtEditor.SelectionStart = 0;
-        txtEditor.SelectionLength = 0;
     }
 
     private void pnlTools_Paint(object sender, PaintEventArgs e) {
@@ -437,8 +399,55 @@ public partial class FormMain : Form {
         rtbPreview.SelectionBackColor = Color.White;
         rtbPreview.SelectionColor = Color.Black;
         rtbPreview.SelectionFont = new Font("Segoe UI", size, style);
+        if (size >= 16f)
+            ApplyTitleRule();
         rtbPreview.Focus();
     }
+
+    private void ApplyTitleRule() {
+        var format = new TitleParagraph {
+            rgxTabs = new int[32],
+            dwMask = 0x40 | 0x800,
+            dySpaceBefore = 240,
+            wBorderSpace = 1,
+            wBorderWidth = 20,
+            wBorders = 0x48
+        };
+        format.cbSize = Marshal.SizeOf(format);
+        SendMessage(rtbPreview.Handle, 0x447, IntPtr.Zero, ref format);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TitleParagraph {
+        public int cbSize;
+        public uint dwMask;
+        public short wNumbering;
+        public short wEffects;
+        public int dxStartIndent;
+        public int dxRightIndent;
+        public int dxOffset;
+        public short wAlignment;
+        public short cTabCount;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+        public int[] rgxTabs;
+        public int dySpaceBefore;
+        public int dySpaceAfter;
+        public int dyLineSpacing;
+        public short sStyle;
+        public byte bLineSpacingRule;
+        public byte bOutlineLevel;
+        public short wShadingWeight;
+        public short wShadingStyle;
+        public short wNumberingStart;
+        public short wNumberingStyle;
+        public short wNumberingTab;
+        public short wBorderSpace;
+        public short wBorderWidth;
+        public short wBorders;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref TitleParagraph format);
 
     private static int LineStart(string text, int index) {
         var i = Math.Clamp(index, 0, text.Length);
@@ -466,56 +475,66 @@ public partial class FormMain : Form {
         rtbPreview.SelectedRtf = snippet;
     }
 
-    private void pnlEditor_MouseDown(object sender, MouseEventArgs e) {
-        txtEditor.Focus();
-    }
-
-    private void txtEditor_TextChanged(object sender, EventArgs e) {
-        if (_suppressDirty)
+    private void rtbPreview_KeyDown(object sender, KeyEventArgs e) {
+        if (_mode != ViewMode.Real || e.KeyCode != Keys.Enter || e.Control || e.Alt)
             return;
-
-        btnSave.Enabled = txtEditor.Text != _savedText;
+        e.SuppressKeyPress = true;
+        rtbPreview.SelectedRtf = "{\\rtf1\\ansi\\line}";
     }
 
     private void rtbPreview_TextChanged(object sender, EventArgs e) {
-        if (_suppressRich || _mode != ViewMode.Real)
+        if (_suppress || !_live)
             return;
-        ApplyLiveMarkdown(RichMarkdown.FromRtf(rtbPreview.Rtf));
+        if (_mode == ViewMode.Edit)
+            _markdown = Normalize(rtbPreview.Text);
+        else if (_mode == ViewMode.Real) {
+            if (rtbPreview.Rtf == _shownRtf)
+                return;
+            _realEdited = true;
+            _shownRtf = rtbPreview.Rtf;
+            _markdown = Normalize(RichMarkdown.FromRtf(rtbPreview.Rtf));
+        }
+        else
+            return;
+
+        btnSave.Enabled = _markdown != _savedText;
     }
 
-    private void rtbPreview_LinkClicked(object sender, LinkClickedEventArgs e) {
-        if (_mode != ViewMode.Preview || string.IsNullOrWhiteSpace(e.LinkText))
-            return;
-        try {
-            Process.Start(new ProcessStartInfo(e.LinkText) { UseShellExecute = true });
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) {
-        }
+    private void Capture() {
+        if (_mode == ViewMode.Edit)
+            _markdown = Normalize(rtbPreview.Text);
+        else if (_mode == ViewMode.Real && _realEdited)
+            _markdown = Normalize(RichMarkdown.FromRtf(rtbPreview.Rtf));
     }
 
-    private void RenderRich() {
-        _suppressRich = true;
+    private void ShowPlain() {
+        _suppress = true;
         try {
-            rtbPreview.Rtf = RichMarkdown.ToRtf(txtEditor.Text);
+            rtbPreview.WordWrap = false;
+            rtbPreview.Font = _plainFont;
+            rtbPreview.Text = _markdown;
             rtbPreview.BackColor = Color.White;
         }
         finally {
-            _suppressRich = false;
+            _suppress = false;
         }
     }
 
-    private void FlushRich() {
-        if (_mode != ViewMode.Real)
-            return;
-        ApplyLiveMarkdown(RichMarkdown.FromRtf(rtbPreview.Rtf));
+    private void ShowRich() {
+        _suppress = true;
+        try {
+            rtbPreview.WordWrap = true;
+            rtbPreview.Font = _richFont;
+            rtbPreview.Rtf = RichMarkdown.ToRtf(_markdown);
+            _shownRtf = rtbPreview.Rtf;
+            rtbPreview.BackColor = Color.White;
+        }
+        finally {
+            _suppress = false;
+        }
     }
 
-    private void ApplyLiveMarkdown(string? markdown) {
-        if (markdown is null || IsDisposed)
-            return;
-        var text = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", "\r\n");
-        if (txtEditor.Text == text)
-            return;
-        txtEditor.Text = text;
+    private static string Normalize(string? text) {
+        return (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n');
     }
 }

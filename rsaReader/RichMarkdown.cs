@@ -20,12 +20,13 @@ internal static class RichMarkdown {
         var source = markdown ?? "";
         var document = Markdown.Parse(source, Pipeline);
         var rtf = new StringBuilder();
+        var map = new SourceMap(source);
         rtf.Append("{\\rtf1\\ansi\\ansicpg1252\\deff0\\deflang1033");
         rtf.Append("{\\fonttbl{\\f0\\fnil\\fcharset0 Segoe UI;}{\\f1\\fnil\\fcharset0 Consolas;}}");
         rtf.Append("{\\colortbl ;\\red11\\green87\\blue208;\\red243\\green243\\blue243;}");
         rtf.Append("\\viewkind4\\uc1");
         foreach (var block in document)
-            RenderBlock(rtf, source, block, 0);
+            RenderBlock(rtf, map, block, 0);
         if (document.Count == 0)
             rtf.Append("\\pard\\f0\\fs24\\par");
         rtf.Append('}');
@@ -54,49 +55,51 @@ internal static class RichMarkdown {
         return rtf.ToString();
     }
 
-    private static void RenderBlock(StringBuilder rtf, string source, Block block, int depth) {
+    private static void RenderBlock(StringBuilder rtf, SourceMap map, Block block, int depth) {
         switch (block) {
             case HeadingBlock heading:
-                RenderParagraph(rtf, heading.Inline, HeadingSize(heading.Level), FontStyleKind.Bold, false, 0, null);
+                RenderParagraph(rtf, heading.Inline, HeadingSize(heading.Level), FontStyleKind.Bold, false, 0, null, map.Take(heading));
                 break;
             case ParagraphBlock paragraph:
-                RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, false, depth, null);
+                RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, false, depth, null, map.Take(paragraph));
                 break;
             case ListBlock list:
-                RenderList(rtf, source, list, depth);
+                RenderList(rtf, map, list, depth);
                 break;
             case FencedCodeBlock or CodeBlock:
-                RenderCode(rtf, block is LeafBlock leaf ? leaf.Lines.ToString() : "");
+                RenderCode(rtf, block is LeafBlock leaf ? leaf.Lines.ToString() : "", map.Take(block));
                 break;
             case QuoteBlock quote:
                 foreach (var child in quote)
-                    RenderQuote(rtf, source, child, depth + 1, 1);
+                    RenderQuote(rtf, map, child, depth + 1, 1);
                 break;
             case ThematicBreakBlock:
-                rtf.Append("\\pard\\f0\\fs24\\cf0 ---\\par");
+                rtf.Append("\\pard\\f0\\fs24 ");
+                AppendGap(rtf, map.Take(block));
+                rtf.Append("---\\par");
                 break;
             default:
-                RenderKept(rtf, source, block);
+                RenderKept(rtf, map, block);
                 break;
         }
     }
 
-    private static void RenderQuote(StringBuilder rtf, string source, Block block, int depth, int quotes) {
+    private static void RenderQuote(StringBuilder rtf, SourceMap map, Block block, int depth, int quotes) {
         if (block is QuoteBlock nested) {
             foreach (var child in nested)
-                RenderQuote(rtf, source, child, depth + 1, quotes + 1);
+                RenderQuote(rtf, map, child, depth + 1, quotes + 1);
             return;
         }
 
         if (block is ParagraphBlock paragraph) {
-            RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, false, depth, new string('>', quotes) + " ");
+            RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, false, depth, new string('>', quotes) + " ", map.Take(paragraph));
             return;
         }
 
-        RenderBlock(rtf, source, block, depth);
+        RenderBlock(rtf, map, block, depth);
     }
 
-    private static void RenderList(StringBuilder rtf, string source, ListBlock list, int depth) {
+    private static void RenderList(StringBuilder rtf, SourceMap map, ListBlock list, int depth) {
         var number = 1;
         if (list.IsOrdered && int.TryParse(list.OrderedStart, out var ordered))
             number = ordered;
@@ -107,13 +110,13 @@ internal static class RichMarkdown {
             var first = true;
             foreach (var child in item) {
                 if (child is ParagraphBlock paragraph && first) {
-                    RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, !list.IsOrdered, depth, task ? (taskChecked ? "1" : "0") : marker);
+                    RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, !list.IsOrdered, depth, task ? (taskChecked ? "1" : "0") : marker, map.Take(paragraph));
                     first = false;
                 }
                 else if (child is ListBlock nested)
-                    RenderList(rtf, source, nested, depth + 1);
+                    RenderList(rtf, map, nested, depth + 1);
                 else
-                    RenderBlock(rtf, source, child, depth);
+                    RenderBlock(rtf, map, child, depth);
             }
 
             if (list.IsOrdered)
@@ -131,8 +134,9 @@ internal static class RichMarkdown {
         return true;
     }
 
-    private static void RenderCode(StringBuilder rtf, string code) {
+    private static void RenderCode(StringBuilder rtf, string code, int? gap) {
         rtf.Append("\\pard\\highlight2\\cb2\\f1\\fs22 ");
+        AppendGap(rtf, gap);
         var lines = code.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         for (var i = 0; i < lines.Length; i++) {
             if (i > 0)
@@ -143,11 +147,13 @@ internal static class RichMarkdown {
         rtf.Append("\\highlight0\\cb0\\f0\\fs24\\par");
     }
 
-    private static void RenderKept(StringBuilder rtf, string source, Block block) {
-        var text = Source(source, block);
+    private static void RenderKept(StringBuilder rtf, SourceMap map, Block block) {
+        var text = Source(map.Text, block);
         if (text.Length == 0)
             return;
-        rtf.Append("\\pard\\f0\\fs24\\v keep:\\v0 ");
+        rtf.Append("\\pard\\f0\\fs24 ");
+        AppendGap(rtf, map.Take(block));
+        rtf.Append("\\v keep:\\v0 ");
         var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         for (var i = 0; i < lines.Length; i++) {
             if (i > 0)
@@ -158,9 +164,11 @@ internal static class RichMarkdown {
         rtf.Append("\\par");
     }
 
-    private static void RenderParagraph(StringBuilder rtf, ContainerInline? inline, int halfPoints, FontStyleKind style, bool bullet, int depth, string? marker) {
+    private static void RenderParagraph(StringBuilder rtf, ContainerInline? inline, int halfPoints, FontStyleKind style, bool bullet, int depth, string? marker, int? gap) {
         var indent = 360 * Math.Max(depth, bullet ? 1 : 0);
         rtf.Append("\\pard");
+        if (halfPoints >= 26)
+            rtf.Append("\\sb240\\brdrb\\brdrs\\brdrw20\\brsp1");
         if (bullet) {
             rtf.Append("{\\*\\pn\\pnlvlblt\\pnf0\\pnindent0{\\pntxtb\\'B7}}\\fi-360");
             indent = Math.Max(indent, 720);
@@ -174,6 +182,7 @@ internal static class RichMarkdown {
         if (style == FontStyleKind.Italic)
             rtf.Append("\\i");
         rtf.Append(' ');
+        AppendGap(rtf, gap);
         if (marker is "0" or "1")
             rtf.Append("\\v task:").Append(marker).Append("\\v0 ");
         else if (!string.IsNullOrEmpty(marker))
@@ -197,8 +206,8 @@ internal static class RichMarkdown {
             case LiteralInline literal:
                 AppendLiteral(rtf, literal.Content.ToString());
                 break;
-            case LineBreakInline line:
-                rtf.Append(line.IsHard ? "\\line " : " ");
+            case LineBreakInline:
+                rtf.Append("\\line ");
                 break;
             case CodeInline code:
                 rtf.Append("\\f1\\fs22 ");
@@ -410,6 +419,11 @@ internal static class RichMarkdown {
         return text.ToString();
     }
 
+    private static void AppendGap(StringBuilder rtf, int? gap) {
+        if (gap is int count)
+            rtf.Append("\\v gap:").Append(count).Append("\\v0 ");
+    }
+
     private static void AppendLiteral(StringBuilder rtf, string text) {
         var parts = text.Split(HardBreak);
         for (var i = 0; i < parts.Length; i++) {
@@ -437,6 +451,33 @@ internal static class RichMarkdown {
                         rtf.Append("\\u").Append((short)c).Append('?');
                     break;
             }
+        }
+    }
+
+    private sealed class SourceMap {
+        public SourceMap(string text) {
+            Text = text;
+        }
+
+        public string Text { get; }
+        private int _previousEnd = -1;
+
+        public int? Take(Block block) {
+            var span = block.Span;
+            if (span.IsEmpty || span.Start < 0 || span.End >= Text.Length)
+                return null;
+            int? gap = 0;
+            if (_previousEnd >= 0 && span.Start > _previousEnd) {
+                var count = 0;
+                for (var i = _previousEnd + 1; i < span.Start && i < Text.Length; i++)
+                    if (Text[i] == '\n')
+                        count++;
+                gap = count;
+            }
+
+            if (span.End > _previousEnd)
+                _previousEnd = span.End;
+            return gap;
         }
     }
 
@@ -481,8 +522,8 @@ internal static class RichMarkdown {
         private readonly StringBuilder _run = new();
         private readonly List<Run> _runs = new();
         private readonly StringBuilder _output = new();
-        private bool _lastWasList;
         private bool _lastWasCode;
+        private int? _gap;
 
         public RtfReader(string rtf) {
             _rtf = rtf;
@@ -506,7 +547,13 @@ internal static class RichMarkdown {
                         continue;
                     }
 
-                    if (word is "colortbl" or "stylesheet" or "info" or "pntext" or "listtext" or "pict" or "object" or "generator" or "datastore") {
+                    if (word is "pntext" or "listtext") {
+                        _bullet = true;
+                        SkipGroup();
+                        continue;
+                    }
+
+                    if (word is "colortbl" or "stylesheet" or "info" or "pict" or "object" or "generator" or "datastore") {
                         SkipGroup();
                         continue;
                     }
@@ -704,6 +751,7 @@ internal static class RichMarkdown {
             switch (word) {
                 case "par":
                     FlushParagraph();
+                    _hidden = false;
                     break;
                 case "line":
                     FlushRun();
@@ -712,6 +760,7 @@ internal static class RichMarkdown {
                 case "pard":
                     FlushRun();
                     _bullet = false;
+                    _hidden = false;
                     _font = 0;
                     _fs = 24;
                     break;
@@ -977,6 +1026,8 @@ internal static class RichMarkdown {
                     BeginEcho(LinkMarkdown(label, linkUrl), label, linkUrl);
                 else if (hidden == "keep:")
                     _keep = true;
+                else if (hidden.StartsWith("gap:", StringComparison.Ordinal) && int.TryParse(hidden.AsSpan(4), out var gap))
+                    _gap = gap;
                 else if (hidden.StartsWith("task:", StringComparison.Ordinal))
                     _runs.Add(new Run(hidden, false, false, false, null, true, _fs));
                 return;
@@ -1044,11 +1095,10 @@ internal static class RichMarkdown {
             if (keep) {
                 var kept = string.Concat(visible.Select(run => run.Text)).Trim('\r', '\n');
                 if (kept.Length > 0) {
-                    Separate(false);
+                    Separate();
                     _output.Append(kept);
                 }
 
-                _lastWasList = false;
                 _lastWasCode = false;
                 return;
             }
@@ -1058,23 +1108,22 @@ internal static class RichMarkdown {
             if (text.Length == 0) {
                 if (_lastWasCode)
                     _output.Append("\n```");
-                else if (_output.Length > 0)
-                    _output.Append("\n\n");
-                _lastWasList = false;
+                else if (_output.Length > 0 && !EndsWithBlankLine())
+                    _output.Append('\n');
+                _gap = null;
                 _lastWasCode = false;
                 return;
             }
 
             if (allCode && !bullet && string.IsNullOrEmpty(task)) {
                 if (!_lastWasCode) {
-                    Separate(false);
+                    Separate();
                     _output.Append("```\n");
                 }
                 else
                     _output.Append('\n');
                 _output.Append(text);
                 _lastWasCode = true;
-                _lastWasList = false;
                 return;
             }
 
@@ -1096,9 +1145,8 @@ internal static class RichMarkdown {
             else if (size >= 26 && visible.TrueForAll(run => run.Raw || run.Bold || run.Text.Trim().Length == 0))
                 prefix = "### ";
 
-            Separate(bullet);
+            Separate();
             _output.Append(prefix).Append(text);
-            _lastWasList = bullet;
             _lastWasCode = false;
         }
 
@@ -1117,7 +1165,7 @@ internal static class RichMarkdown {
 
                 var piece = run.Text.Replace("\r", "");
                 if (piece == "\n") {
-                    text.Append(allCode ? "\n" : "  \n");
+                    text.Append('\n');
                     continue;
                 }
 
@@ -1146,12 +1194,22 @@ internal static class RichMarkdown {
             return text.Replace("\\", "\\\\").Replace("`", "\\`").Replace("*", "\\*").Replace("_", "\\_").Replace("[", "\\[").Replace("\u00A0", "&nbsp;");
         }
 
-        private void Separate(bool list) {
-            if (_output.Length == 0)
+        private void Separate() {
+            var gap = _gap;
+            _gap = null;
+            if (_output.Length == 0 || _lastWasCode)
                 return;
-            if (_lastWasCode)
+            if (gap is int count) {
+                if (count > 0)
+                    _output.Append('\n', count);
                 return;
-            _output.Append(_lastWasList && list ? "\n" : "\n\n");
+            }
+
+            _output.Append('\n');
+        }
+
+        private bool EndsWithBlankLine() {
+            return _output.Length >= 2 && _output[^1] == '\n' && _output[^2] == '\n';
         }
 
         private static string Tidy(string markdown) {
