@@ -756,9 +756,6 @@ internal static class RichMarkdown {
                 }
             }
 
-            if (LineHasText(_note, markdownIndex))
-                predicted = BreakAfterText(predicted, line);
-
             if (Same(actual))
                 return Math.Min(predicted, actual.Length);
             if (VisibleSame(actual))
@@ -804,42 +801,6 @@ internal static class RichMarkdown {
             }
 
             return true;
-        }
-
-        private int BreakAfterText(int slotIndex, int line) {
-            var chosen = slotIndex;
-            for (var i = slotIndex - 1; i >= 0; i--) {
-                if (_slots[i].Hidden)
-                    continue;
-                if (_slots[i].Char != '\n')
-                    break;
-                if (LineOf(_note, _slots[i].Index) < line)
-                    break;
-                chosen = i;
-            }
-
-            return chosen;
-        }
-
-        private static bool LineHasText(string text, int index) {
-            if (index < 0)
-                index = 0;
-            if (index > text.Length)
-                index = text.Length;
-            var end = index;
-            if (index < text.Length && text[index] != '\n') {
-                end = text.IndexOf('\n', index);
-                if (end < 0)
-                    end = text.Length;
-            }
-
-            var start = 0;
-            if (end > 0) {
-                var previous = text.LastIndexOf('\n', end - 1);
-                start = previous < 0 ? 0 : previous + 1;
-            }
-
-            return end > start;
         }
 
         private int LastSlotOnLine(int before, int line) {
