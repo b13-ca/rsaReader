@@ -310,7 +310,7 @@ internal static class RichMarkdown {
                 WriteSpan(rtf, literal.Content.ToString(), literal.Span);
                 break;
             case LineBreakInline line:
-                var at = Here(line.IsHard && !line.Span.IsEmpty ? line.Span.End : line.Span.Start);
+                var at = Here(line.Span.Start);
                 if (line.IsHard && !Draws(line.NextSibling) && EmptyLineFollows(at))
                     AppendParagraphBreak(rtf, at);
                 else if (line.IsHard)
@@ -743,8 +743,7 @@ internal static class RichMarkdown {
                 if (slot.Hidden)
                     continue;
                 if (LineOf(_note, slot.Index) > line) {
-                    var stay = LastSlotOnLine(i, line);
-                    predicted = stay >= 0 ? stay : i;
+                    predicted = i;
                     break;
                 }
 
@@ -757,16 +756,6 @@ internal static class RichMarkdown {
             if (Same(actual))
                 return Math.Min(predicted, actual.Length);
             return MapPredicted(actual, predicted);
-        }
-
-        private int LastSlotOnLine(int before, int line) {
-            for (var i = before - 1; i >= 0; i--) {
-                if (_slots[i].Hidden)
-                    continue;
-                return LineOf(_note, _slots[i].Index) == line ? i : -1;
-            }
-
-            return -1;
         }
 
         private static int LineOf(string text, int index) {
