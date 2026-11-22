@@ -37,7 +37,7 @@ internal static class Program {
             if (!string.IsNullOrWhiteSpace(documentPath)) {
                 var emptyFile = File.Exists(documentPath) && new FileInfo(documentPath).Length == 0;
                 if (!emptyFile) {
-                    var opened = ReadDocument(documentPath);
+                    var opened = FormMain.ReadDocument(null, documentPath);
                     if (opened is null)
                         documentPath = null;
                     else {
@@ -56,42 +56,6 @@ internal static class Program {
         }
         finally {
             CefHost.Stop();
-        }
-    }
-
-    private static (string Data, string KeyHex, string AesKeyHex)? ReadDocument(string path) {
-        RsaFile.Package package;
-        try {
-            package = RsaFile.Read(path);
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException) {
-            MessageBox.Show(ex.Message, "rsaReader", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return null;
-        }
-
-        var keyHex = package.Key ?? "";
-        string aesKeyHex;
-        try {
-            if (PhraseHash.HexEquals(keyHex, KeyStore.ReadKey()))
-                aesKeyHex = AppSession.DecryptPassword;
-            else {
-                var phrase = FormFileKey.Prompt(null!, keyHex, Path.GetFileName(path));
-                if (phrase is null)
-                    return null;
-                aesKeyHex = PhraseHash.DecryptPassword(phrase);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException) {
-            MessageBox.Show(ex.Message, "rsaReader", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return null;
-        }
-
-        try {
-            return (RsaFile.Decrypt(package, aesKeyHex), keyHex, aesKeyHex);
-        }
-        catch (InvalidDataException ex) {
-            MessageBox.Show(ex.Message, "rsaReader", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return null;
         }
     }
 }

@@ -12,11 +12,12 @@ partial class FormMain {
     private void InitializeComponent() {
         this.pnlBar = new Panel();
         this.pnlSave = new Panel();
+        this.btnLoad = new Button();
         this.btnSave = new Button();
         this.pnlPreviewButton = new Panel();
         this.btnPreview = new Button();
         this.pnlEditor = new Panel();
-        this.txtEditor = new TextBox();
+        this.txtEditor = new EditorTextBox();
         this.pnlPreview = new Panel();
         this.webPreview = new ChromiumWebBrowser();
         this.lblPreview = new Label();
@@ -39,17 +40,28 @@ partial class FormMain {
         // 
         // pnlSave
         // 
+        this.pnlSave.Controls.Add(this.btnLoad);
         this.pnlSave.Controls.Add(this.btnSave);
         this.pnlSave.Dock = DockStyle.Left;
         this.pnlSave.Location = new Point(0, 0);
         this.pnlSave.Name = "pnlSave";
-        this.pnlSave.Size = new Size(104, 40);
+        this.pnlSave.Size = new Size(200, 40);
         this.pnlSave.TabIndex = 1;
+        // 
+        // btnLoad
+        // 
+        this.btnLoad.Location = new Point(8, 6);
+        this.btnLoad.Name = "btnLoad";
+        this.btnLoad.Size = new Size(88, 28);
+        this.btnLoad.TabIndex = 0;
+        this.btnLoad.Text = "Load";
+        this.btnLoad.UseVisualStyleBackColor = true;
+        this.btnLoad.Click += this.btnLoad_Click;
         // 
         // btnSave
         // 
         this.btnSave.Enabled = false;
-        this.btnSave.Location = new Point(8, 6);
+        this.btnSave.Location = new Point(104, 6);
         this.btnSave.Name = "btnSave";
         this.btnSave.Size = new Size(88, 28);
         this.btnSave.TabIndex = 0;
@@ -163,11 +175,12 @@ partial class FormMain {
 
     private Panel pnlBar;
     private Panel pnlSave;
+    private Button btnLoad;
     private Button btnSave;
     private Panel pnlPreviewButton;
     private Button btnPreview;
     private Panel pnlEditor;
-    private TextBox txtEditor;
+    private EditorTextBox txtEditor;
     private Panel pnlPreview;
     private Label lblPreview;
     private ChromiumWebBrowser webPreview;
