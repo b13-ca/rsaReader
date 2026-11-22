@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace rsaReader;
 
@@ -429,20 +430,8 @@ public partial class FormMain : Form {
             }
 
             var caret = rtbPreview.SelectionStart;
-            var total = rtbPreview.TextLength;
-            var before = "";
-            var after = "";
-            if (caret > 0) {
-                rtbPreview.Select(0, caret);
-                before = RichMarkdown.FromRtf(rtbPreview.SelectedRtf);
-            }
-
-            if (caret < total) {
-                rtbPreview.Select(caret, total - caret);
-                after = RichMarkdown.FromRtf(rtbPreview.SelectedRtf);
-            }
-
-            _markdown = before + "  \n" + after;
+            var index = RichMarkdown.SourceIndexAt(_markdown, VisibleOffset(rtbPreview.Text, caret));
+            _markdown = _markdown.Insert(index, "  \n");
             ShowRich();
             rtbPreview.Select(Math.Clamp(caret, 0, rtbPreview.TextLength), 0);
         });
@@ -1008,6 +997,36 @@ public partial class FormMain : Form {
             if (m.Msg == 0x000F)
                 _paint();
         }
+    }
+
+    private static int VisibleOffset(string text, int caret) {
+        var slice = text[..Math.Clamp(caret, 0, text.Length)].Replace("\r\n", "\n").Replace('\r', '\n');
+        var hidden = new[] { "br:", "keep:", "task:0", "task:1", "img:", "lnk:", "gap:" };
+        var plain = new StringBuilder(slice.Length);
+        for (var i = 0; i < slice.Length;) {
+            var skipped = false;
+            foreach (var token in hidden) {
+                if (i + token.Length > slice.Length || !slice.AsSpan(i, token.Length).SequenceEqual(token))
+                    continue;
+                i += token.Length;
+                if (token is "img:" or "lnk:") {
+                    while (i < slice.Length && slice[i] is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '+' or '/' or '=')
+                        i++;
+                }
+                else if (token == "gap:") {
+                    while (i < slice.Length && char.IsDigit(slice[i]))
+                        i++;
+                }
+
+                skipped = true;
+                break;
+            }
+
+            if (!skipped)
+                plain.Append(slice[i++]);
+        }
+
+        return plain.Length;
     }
 
     private void CaptureMarkdown() {

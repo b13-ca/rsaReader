@@ -53,6 +53,20 @@ internal static class RichMarkdown {
         return new RtfReader(rtf).Read();
     }
 
+    public static int SourceIndexAt(string? markdown, int visibleOffset) {
+        var source = markdown ?? "";
+        if (visibleOffset <= 0 || source.Length == 0)
+            return 0;
+        var seen = 0;
+        var tail = 0;
+        var found = WalkBlocks(Markdown.Parse(source, Pipeline), visibleOffset, ref seen, ref tail);
+        if (found is int index)
+            return Math.Clamp(index, 0, source.Length);
+        if (seen == visibleOffset)
+            return Math.Clamp(tail, 0, source.Length);
+        return source.Length;
+    }
+
     public static string LinkRtf(string text, string url) {
         var rtf = new StringBuilder();
         rtf.Append("{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Segoe UI;}}{\\colortbl ;\\red11\\green87\\blue208;}\\f0\\fs24");
@@ -529,6 +543,129 @@ internal static class RichMarkdown {
         }
 
         return changed ? string.Join("\n", lines) : markdown ?? "";
+    }
+
+    private static int? WalkBlocks(ContainerBlock blocks, int target, ref int seen, ref int tail) {
+        Block? previous = null;
+        foreach (var block in blocks) {
+            if (previous is not null) {
+                if (seen == target)
+                    return tail;
+                seen++;
+            }
+
+            previous = block;
+            var found = WalkBlock(block, target, ref seen);
+            tail = ContentEnd(block);
+            if (found is int index)
+                return index;
+        }
+
+        return null;
+    }
+
+    private static int? WalkBlock(Block block, int target, ref int seen) {
+        switch (block) {
+            case ThematicBreakBlock theme:
+                for (var i = 0; i < 3; i++) {
+                    if (seen == target)
+                        return theme.Span.IsEmpty ? 0 : theme.Span.Start + i;
+                    seen++;
+                }
+
+                return null;
+            case FencedCodeBlock or CodeBlock:
+                return WalkLines((LeafBlock)block, target, ref seen);
+            case LeafBlock leaf when leaf.Inline is not null:
+                return WalkInlines(leaf.Inline, target, ref seen);
+            case ContainerBlock container:
+                var tail = ContentEnd(block);
+                return WalkBlocks(container, target, ref seen, ref tail);
+            default:
+                return WalkLines(block as LeafBlock, target, ref seen);
+        }
+    }
+
+    private static int? WalkLines(LeafBlock? leaf, int target, ref int seen) {
+        if (leaf is null || leaf.Lines.Count == 0)
+            return null;
+        var count = leaf.Lines.Count;
+        for (var lineNo = 0; lineNo < count; lineNo++) {
+            var line = leaf.Lines.Lines[lineNo];
+            var text = line.Slice;
+            var origin = line.Position;
+            for (var i = 0; i < text.Length; i++) {
+                if (seen == target)
+                    return origin + i;
+                if (text[i] != '\r')
+                    seen++;
+            }
+
+            if (lineNo + 1 >= count)
+                continue;
+            if (seen == target)
+                return origin + text.Length;
+            seen++;
+        }
+
+        return null;
+    }
+
+    private static int? WalkInlines(ContainerInline? inline, int target, ref int seen) {
+        for (var child = inline?.FirstChild; child is not null; child = child.NextSibling) {
+            var found = WalkInline(child, target, ref seen);
+            if (found is int index)
+                return index;
+        }
+
+        return null;
+    }
+
+    private static int? WalkInline(Inline inline, int target, ref int seen) {
+        switch (inline) {
+            case LiteralInline literal:
+                var literalOrigin = literal.Span.IsEmpty ? 0 : literal.Span.Start;
+                var literalLength = literal.Content.Length;
+                for (var i = 0; i < literalLength; i++) {
+                    if (seen == target)
+                        return literalOrigin + i;
+                    if (literal.Content[i] != '\r')
+                        seen++;
+                }
+
+                return null;
+            case CodeInline code:
+                var codeOrigin = code.Span.IsEmpty ? 0 : code.Span.Start + code.DelimiterCount;
+                for (var i = 0; i < code.Content.Length; i++) {
+                    if (seen == target)
+                        return codeOrigin + i;
+                    seen++;
+                }
+
+                return null;
+            case LineBreakInline line:
+                if (seen == target)
+                    return line.Span.IsEmpty ? 0 : line.Span.Start;
+                seen++;
+                return null;
+            case ContainerInline container:
+                return WalkInlines(container, target, ref seen);
+            default:
+                return null;
+        }
+    }
+
+    private static int ContentEnd(Block block) {
+        if (block is LeafBlock leaf) {
+            if (leaf.Inline?.LastChild is { Span.IsEmpty: false } last)
+                return last.Span.End + 1;
+            if (leaf.Lines.Count > 0) {
+                var line = leaf.Lines.Lines[leaf.Lines.Count - 1];
+                return line.Position + line.Slice.Length;
+            }
+        }
+
+        return block.Span.IsEmpty ? 0 : block.Span.End + 1;
     }
 
     private static string Source(string markdown, Block block) {
