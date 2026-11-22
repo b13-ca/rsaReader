@@ -15,8 +15,7 @@ partial class FormMain {
         this.btnSave = new Button();
         this.btnTheme = new Button();
         this.pnlModes = new Panel();
-        this.btnEdit = new Button();
-        this.btnReal = new Button();
+        this.btnMode = new Button();
         this.pnlTools = new Panel();
         this.btnBold = new Button();
         this.btnH1 = new Button();
@@ -24,6 +23,7 @@ partial class FormMain {
         this.btnBullet = new Button();
         this.btnLink = new Button();
         this.btnImage = new Button();
+        this.btnInlineCode = new Button();
         this.btnCode = new Button();
         this.btnBreak = new Button();
         this.pnlPreview = new Panel();
@@ -100,33 +100,22 @@ partial class FormMain {
         // 
         // pnlModes
         // 
-        this.pnlModes.Controls.Add(this.btnEdit);
-        this.pnlModes.Controls.Add(this.btnReal);
+        this.pnlModes.Controls.Add(this.btnMode);
         this.pnlModes.Dock = DockStyle.Right;
-        this.pnlModes.Location = new Point(853, 0);
+        this.pnlModes.Location = new Point(925, 0);
         this.pnlModes.Name = "pnlModes";
-        this.pnlModes.Size = new Size(184, 40);
+        this.pnlModes.Size = new Size(112, 40);
         this.pnlModes.TabIndex = 0;
         // 
-        // btnEdit
+        // btnMode
         // 
-        this.btnEdit.Location = new Point(8, 6);
-        this.btnEdit.Name = "btnEdit";
-        this.btnEdit.Size = new Size(80, 28);
-        this.btnEdit.TabIndex = 0;
-        this.btnEdit.Text = "Edit";
-        this.btnEdit.UseVisualStyleBackColor = false;
-        this.btnEdit.Click += this.btnEdit_Click;
-        // 
-        // btnReal
-        // 
-        this.btnReal.Location = new Point(96, 6);
-        this.btnReal.Name = "btnReal";
-        this.btnReal.Size = new Size(80, 28);
-        this.btnReal.TabIndex = 1;
-        this.btnReal.Text = "Real";
-        this.btnReal.UseVisualStyleBackColor = false;
-        this.btnReal.Click += this.btnReal_Click;
+        this.btnMode.Location = new Point(8, 6);
+        this.btnMode.Name = "btnMode";
+        this.btnMode.Size = new Size(96, 28);
+        this.btnMode.TabIndex = 0;
+        this.btnMode.Text = "Preview";
+        this.btnMode.UseVisualStyleBackColor = true;
+        this.btnMode.Click += this.btnMode_Click;
         // 
         // pnlTools
         // 
@@ -136,6 +125,7 @@ partial class FormMain {
         this.pnlTools.Controls.Add(this.btnBullet);
         this.pnlTools.Controls.Add(this.btnLink);
         this.pnlTools.Controls.Add(this.btnImage);
+        this.pnlTools.Controls.Add(this.btnInlineCode);
         this.pnlTools.Controls.Add(this.btnCode);
         this.pnlTools.Controls.Add(this.btnBreak);
         this.pnlTools.Dock = DockStyle.Bottom;
@@ -208,22 +198,32 @@ partial class FormMain {
         this.btnImage.UseVisualStyleBackColor = true;
         this.btnImage.Click += this.btnImage_Click;
         // 
+        // btnInlineCode
+        // 
+        this.btnInlineCode.Location = new Point(280, 6);
+        this.btnInlineCode.Name = "btnInlineCode";
+        this.btnInlineCode.Size = new Size(36, 28);
+        this.btnInlineCode.TabIndex = 6;
+        this.btnInlineCode.Text = "`";
+        this.btnInlineCode.UseVisualStyleBackColor = true;
+        this.btnInlineCode.Click += this.btnInlineCode_Click;
+        // 
         // btnCode
         // 
-        this.btnCode.Location = new Point(280, 6);
+        this.btnCode.Location = new Point(320, 6);
         this.btnCode.Name = "btnCode";
         this.btnCode.Size = new Size(56, 28);
-        this.btnCode.TabIndex = 6;
+        this.btnCode.TabIndex = 7;
         this.btnCode.Text = "```";
         this.btnCode.UseVisualStyleBackColor = true;
         this.btnCode.Click += this.btnCode_Click;
         // 
         // btnBreak
         // 
-        this.btnBreak.Location = new Point(340, 6);
+        this.btnBreak.Location = new Point(380, 6);
         this.btnBreak.Name = "btnBreak";
         this.btnBreak.Size = new Size(44, 28);
-        this.btnBreak.TabIndex = 7;
+        this.btnBreak.TabIndex = 8;
         this.btnBreak.Text = "br";
         this.btnBreak.UseVisualStyleBackColor = true;
         this.btnBreak.Click += this.btnBreak_Click;
@@ -286,8 +286,7 @@ partial class FormMain {
     private Button btnSave;
     private Button btnTheme;
     private Panel pnlModes;
-    private Button btnEdit;
-    private Button btnReal;
+    private Button btnMode;
     private Panel pnlTools;
     private Button btnBold;
     private Button btnH1;
@@ -295,6 +294,7 @@ partial class FormMain {
     private Button btnBullet;
     private Button btnLink;
     private Button btnImage;
+    private Button btnInlineCode;
     private Button btnCode;
     private Button btnBreak;
     private Panel pnlPreview;

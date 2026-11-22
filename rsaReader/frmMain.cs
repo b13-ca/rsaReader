@@ -79,17 +79,17 @@ public partial class FormMain : Form {
     }
 
     private void btnSave_Click(object sender, EventArgs e) {
-        Capture();
+        CaptureMarkdown();
         TrySave();
     }
 
     private void btnLoad_Click(object sender, EventArgs e) {
-        Capture();
+        CaptureMarkdown();
         if (!ConfirmReplace())
             return;
 
         using var dialog = new OpenFileDialog {
-            Filter = "rsaReader (*.rsa)|*.rsa",
+            Filter = "rsaReader (*.rsa;*.md;*.txt)|*.rsa;*.md;*.txt|Markdown (*.md)|*.md|Text (*.txt)|*.txt|rsaReader (*.rsa)|*.rsa",
             DefaultExt = "rsa",
             CheckFileExists = true
         };
@@ -129,6 +129,17 @@ public partial class FormMain : Form {
             return;
         }
 
+        if (IsPlainNote(path)) {
+            var text = ReadPlain(this, path);
+            if (text is null)
+                return;
+            _keyHex = null;
+            _aesKeyHex = null;
+            PrepareDocument(text, path);
+            ShowReal();
+            return;
+        }
+
         var opened = ReadDocument(this, path);
         if (opened is null)
             return;
@@ -149,6 +160,22 @@ public partial class FormMain : Form {
         _openAsReal = false;
         Text = "rsaReader - " + Path.GetFileName(path);
         ShowEditor();
+    }
+
+    internal static bool IsPlainNote(string path) {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".md", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".txt", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string? ReadPlain(IWin32Window? owner, string path) {
+        try {
+            return File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) {
+            ShowReadError(owner, path + Environment.NewLine + Environment.NewLine + ex.Message);
+            return null;
+        }
     }
 
     internal static (string Data, string KeyHex, string AesKeyHex)? ReadDocument(IWin32Window? owner, string path) {
@@ -223,6 +250,20 @@ public partial class FormMain : Form {
         }
 
         var path = _documentPath;
+        var converted = path is not null && IsPlainNote(path);
+        if (converted)
+            path = EnsureRsaExtension(path!);
+        if (converted && File.Exists(path)) {
+            var replace = MessageBox.Show(
+                this,
+                Path.GetFileName(path) + " already exists. Replace it?",
+                "rsaReader",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (replace != DialogResult.Yes)
+                return false;
+        }
+
         if (path is null) {
             using var dialog = new SaveFileDialog {
                 Filter = "rsaReader (*.rsa)|*.rsa",
@@ -281,18 +322,12 @@ public partial class FormMain : Form {
         Text = "rsaReader - " + Path.GetFileName(path);
     }
 
-    private void btnEdit_Click(object sender, EventArgs e) {
+    private void btnMode_Click(object sender, EventArgs e) {
+        CaptureMarkdown();
         if (_mode == ViewMode.Edit)
-            return;
-        Capture();
-        ShowEditor();
-    }
-
-    private void btnReal_Click(object sender, EventArgs e) {
-        if (_mode == ViewMode.Real)
-            return;
-        Capture();
-        ShowReal();
+            ShowReal();
+        else
+            ShowEditor();
     }
 
     private void ShowEditor() {
@@ -317,18 +352,9 @@ public partial class FormMain : Form {
     }
 
     private void ApplyMode() {
-        var edit = _mode == ViewMode.Edit;
-        pnlTools.Enabled = _mode == ViewMode.Real;
+        pnlTools.Enabled = true;
         rtbPreview.ReadOnly = false;
-        StyleModeButton(btnEdit, edit);
-        StyleModeButton(btnReal, _mode == ViewMode.Real);
-    }
-
-    private static void StyleModeButton(Button button, bool active) {
-        button.FlatStyle = FlatStyle.Flat;
-        button.FlatAppearance.BorderColor = active ? Color.FromArgb(70, 120, 180) : SystemColors.ControlDark;
-        button.FlatAppearance.BorderSize = active ? 2 : 1;
-        button.BackColor = active ? Color.FromArgb(220, 232, 246) : SystemColors.Control;
+        btnMode.Text = _mode == ViewMode.Edit ? "Preview" : "Edit";
     }
 
     private void pnlTools_Paint(object sender, PaintEventArgs e) {
@@ -337,51 +363,321 @@ public partial class FormMain : Form {
     }
 
     private void btnBold_Click(object sender, EventArgs e) {
-        ToggleStyle(FontStyle.Bold);
+        RunButton(() => {
+            if (_mode == ViewMode.Edit)
+                ToggleMarkdownWrap("**");
+            else
+                ToggleStyle(FontStyle.Bold);
+        });
     }
 
     private void btnH1_Click(object sender, EventArgs e) {
-        FormatParagraph(22f, FontStyle.Bold, false);
+        RunButton(() => {
+            if (_mode == ViewMode.Edit)
+                ToggleHeading("# ");
+            else
+                FormatParagraph(22f, FontStyle.Bold, false);
+        });
     }
 
     private void btnH2_Click(object sender, EventArgs e) {
-        FormatParagraph(16f, FontStyle.Bold, false);
+        RunButton(() => {
+            if (_mode == ViewMode.Edit)
+                ToggleHeading("## ");
+            else
+                FormatParagraph(16f, FontStyle.Bold, false);
+        });
     }
 
     private void btnBullet_Click(object sender, EventArgs e) {
-        if (_mode != ViewMode.Real)
-            return;
-        rtbPreview.SelectionBullet = !rtbPreview.SelectionBullet;
-        rtbPreview.Focus();
+        RunButton(() => {
+            if (_mode == ViewMode.Edit)
+                ToggleBullet();
+            else {
+                SelectNextWord();
+                rtbPreview.SelectionBullet = !rtbPreview.SelectionBullet;
+            }
+        });
     }
 
     private void btnLink_Click(object sender, EventArgs e) {
-        InsertRichTarget(false);
+        RunButton(() => {
+            SelectNextWord();
+            InsertRichTarget(false);
+        });
     }
 
     private void btnImage_Click(object sender, EventArgs e) {
-        InsertRichTarget(true);
+        RunButton(() => InsertRichTarget(true));
+    }
+
+    private void btnInlineCode_Click(object sender, EventArgs e) {
+        RunButton(() => ApplyCodeButton(false));
     }
 
     private void btnCode_Click(object sender, EventArgs e) {
-        if (_mode != ViewMode.Real)
-            return;
-        rtbPreview.SelectionFont = new Font("Consolas", 11f, FontStyle.Regular);
-        rtbPreview.SelectionBackColor = _dark ? Color.FromArgb(46, 46, 46) : Color.FromArgb(243, 243, 243);
-        rtbPreview.SelectionColor = _dark ? Color.White : Color.FromArgb(28, 28, 28);
-        rtbPreview.Focus();
+        RunButton(() => ApplyCodeButton(true));
     }
 
     private void btnBreak_Click(object sender, EventArgs e) {
-        if (_mode != ViewMode.Real)
+        RunButton(() => {
+            if (_mode == ViewMode.Edit) {
+                var start = rtbPreview.SelectionStart;
+                rtbPreview.SelectedText = "  \n";
+                rtbPreview.Select(start + 3, 0);
+                return;
+            }
+
+            var start = rtbPreview.SelectionStart;
+            var total = rtbPreview.TextLength;
+            var before = "";
+            var after = "";
+            if (start > 0) {
+                rtbPreview.Select(0, start);
+                before = RichMarkdown.FromRtf(rtbPreview.SelectedRtf);
+            }
+
+            if (start < total) {
+                rtbPreview.Select(start, total - start);
+                after = RichMarkdown.FromRtf(rtbPreview.SelectedRtf);
+            }
+
+            _markdown = before + "  \n" + after;
+            ShowRich();
+            rtbPreview.Select(Math.Clamp(start, 0, rtbPreview.TextLength), 0);
+        });
+    }
+
+    private void RunButton(Action action) {
+        var hadSelection = rtbPreview.SelectionLength > 0;
+        var caret = rtbPreview.SelectionStart;
+        var before = rtbPreview.Text;
+        action();
+        if (!hadSelection) {
+            var restored = MapCaret(before, rtbPreview.Text, caret);
+            rtbPreview.Select(Math.Clamp(restored, 0, rtbPreview.TextLength), 0);
+        }
+
+        rtbPreview.Focus();
+    }
+
+    private static int MapCaret(string before, string after, int caret) {
+        var prefix = 0;
+        var limit = Math.Min(before.Length, after.Length);
+        while (prefix < limit && before[prefix] == after[prefix])
+            prefix++;
+
+        var suffix = 0;
+        var beforeRemain = before.Length - prefix;
+        var afterRemain = after.Length - prefix;
+        while (suffix < beforeRemain && suffix < afterRemain
+            && before[before.Length - 1 - suffix] == after[after.Length - 1 - suffix])
+            suffix++;
+
+        var beforeEnd = before.Length - suffix;
+        if (caret <= prefix)
+            return caret;
+        if (caret >= beforeEnd)
+            return caret + after.Length - before.Length;
+        return prefix + Math.Min(caret - prefix, Math.Max(0, after.Length - suffix - prefix));
+    }
+
+    private void ApplyCodeButton(bool fence) {
+        var text = rtbPreview.Text;
+        var start = rtbPreview.SelectionStart;
+        var length = rtbPreview.SelectionLength;
+        var anchor = length == 0 ? start : Math.Min(text.Length - 1, start + length - 1);
+        var from = LineStart(text, start);
+        var to = LineEnd(text, Math.Max(0, anchor));
+        if (length > 0 && text[from..to].Contains('\n')) {
+            ToggleFence(from, to);
             return;
-        rtbPreview.SelectedRtf = RichMarkdown.HardBreakRtf;
+        }
+
+        if (fence && length == 0) {
+            ToggleWholeLine(from, to);
+            return;
+        }
+
+        if (!fence && length == 0)
+            SelectNextWord();
+        if (_mode == ViewMode.Edit)
+            WrapSelection(fence ? "```" : "`");
+        else
+            ApplyCodeStyle();
+    }
+
+    private void ToggleWholeLine(int from, int to) {
+        var line = rtbPreview.Text[from..to];
+        if (LineHasCodeMarks(line)) {
+            var inner = StripCodeMarks(line);
+            rtbPreview.Select(from, to - from);
+            rtbPreview.SelectedText = inner;
+            rtbPreview.Select(from, inner.Length);
+            if (_mode == ViewMode.Real)
+                ClearCodeStyle();
+            return;
+        }
+
+        var wrapped = "```" + line + "```";
+        rtbPreview.Select(from, to - from);
+        rtbPreview.SelectedText = wrapped;
+        rtbPreview.Select(from, wrapped.Length);
+        if (_mode == ViewMode.Real)
+            ApplyCodeStyle();
+    }
+
+    private void ToggleFence(int from, int to) {
+        if (_mode == ViewMode.Real) {
+            rtbPreview.Select(from, to - from);
+            ApplyCodeStyle();
+            return;
+        }
+
+        var block = rtbPreview.Text[from..to];
+        string next;
+        if (block.StartsWith("```\n", StringComparison.Ordinal) && block.EndsWith("\n```", StringComparison.Ordinal) && block.Length >= 8)
+            next = block[4..^4];
+        else
+            next = "```\n" + block.TrimEnd('\n') + "\n```";
+        rtbPreview.Select(from, to - from);
+        rtbPreview.SelectedText = next;
+        rtbPreview.Select(from, next.Length);
+    }
+
+    private void ApplyCodeStyle() {
+        rtbPreview.SelectionFont = new Font("Consolas", 11f, FontStyle.Regular);
+        rtbPreview.SelectionBackColor = _dark ? Color.FromArgb(46, 46, 46) : Color.FromArgb(243, 243, 243);
+        rtbPreview.SelectionColor = _dark ? Color.White : Color.FromArgb(28, 28, 28);
+    }
+
+    private static bool LineHasCodeMarks(string line) {
+        var core = line.Trim();
+        return core.Length >= 6 && core.StartsWith("```", StringComparison.Ordinal) && core.EndsWith("```", StringComparison.Ordinal);
+    }
+
+    private static string StripCodeMarks(string line) {
+        var lead = line.Length - line.TrimStart().Length;
+        var core = line.Trim();
+        return line[..lead] + core[3..^3] + line[(lead + core.Length)..];
+    }
+
+    private void ClearCodeStyle() {
+        rtbPreview.SelectionFont = new Font(_mode == ViewMode.Edit ? "Consolas" : "Segoe UI", _mode == ViewMode.Edit ? 11f : 12f, FontStyle.Regular);
+        rtbPreview.SelectionBackColor = _dark && _mode == ViewMode.Real ? Color.Black : Color.White;
+        rtbPreview.SelectionColor = _dark && _mode == ViewMode.Real ? Color.White : Color.FromArgb(28, 28, 28);
+    }
+
+    private void ToggleMarkdownWrap(string mark) {
+        SelectNextWord();
+        WrapSelection(mark);
+    }
+
+    private void WrapSelection(string mark) {
+        var selected = rtbPreview.SelectedText.Replace("\r\n", "\n").Replace('\r', '\n');
+        var start = rtbPreview.SelectionStart;
+        var text = rtbPreview.Text;
+        if (selected.StartsWith(mark, StringComparison.Ordinal)
+            && selected.EndsWith(mark, StringComparison.Ordinal)
+            && selected.Length >= mark.Length * 2) {
+            var inner = selected[mark.Length..^mark.Length];
+            rtbPreview.SelectedText = inner;
+            rtbPreview.Select(start, inner.Length);
+        }
+        else if (start >= mark.Length
+            && start + rtbPreview.SelectionLength + mark.Length <= text.Length
+            && text.Substring(start - mark.Length, mark.Length) == mark
+            && text.Substring(start + rtbPreview.SelectionLength, mark.Length) == mark) {
+            var length = rtbPreview.SelectionLength;
+            rtbPreview.Select(start - mark.Length, length + mark.Length * 2);
+            rtbPreview.SelectedText = selected;
+            rtbPreview.Select(start - mark.Length, selected.Length);
+        }
+        else {
+            if (mark == "**")
+                RemoveHeadingPrefix();
+            start = rtbPreview.SelectionStart;
+            selected = rtbPreview.SelectedText.Replace("\r\n", "\n").Replace('\r', '\n');
+            rtbPreview.SelectedText = mark + selected + mark;
+            rtbPreview.Select(start + mark.Length, selected.Length);
+        }
+
+        rtbPreview.Focus();
+    }
+
+    private void RemoveHeadingPrefix() {
+        var text = rtbPreview.Text;
+        var start = rtbPreview.SelectionStart;
+        var length = rtbPreview.SelectionLength;
+        var from = LineStart(text, start);
+        var i = from;
+        while (i < text.Length && text[i] == ' ')
+            i++;
+        var hashes = 0;
+        while (i + hashes < text.Length && text[i + hashes] == '#' && hashes < 3)
+            hashes++;
+        if (hashes is not 1 and not 2)
+            return;
+        if (i + hashes >= text.Length || text[i + hashes] != ' ')
+            return;
+        var removeLen = hashes + 1;
+        if (start < i + removeLen)
+            return;
+        rtbPreview.Select(i, removeLen);
+        rtbPreview.SelectedText = "";
+        rtbPreview.Select(start - removeLen, length);
+    }
+
+    private void ToggleHeading(string prefix) {
+        var level = prefix.Trim().Length;
+        ReplaceLines(line => {
+            var lead = line.Length - line.TrimStart().Length;
+            var core = line.TrimStart();
+            var hashes = 0;
+            while (hashes < core.Length && core[hashes] == '#')
+                hashes++;
+            var heading = hashes > 0 && hashes < core.Length && core[hashes] == ' ';
+            var body = StripBold(heading ? core[(hashes + 1)..] : core);
+            if (heading && hashes == level)
+                return line[..lead] + body;
+            return line[..lead] + prefix + body;
+        });
+    }
+
+    private static string StripBold(string text) {
+        return text.Replace("**", "").Replace("__", "").Trim();
+    }
+
+    private void ToggleBullet() {
+        ReplaceLines(line => {
+            var lead = line.Length - line.TrimStart().Length;
+            var core = line.TrimStart();
+            if (core.StartsWith("- ", StringComparison.Ordinal))
+                return line[..lead] + core[2..];
+            return line[..lead] + "- " + core;
+        });
+    }
+
+    private void ReplaceLines(Func<string, string> transform) {
+        var text = rtbPreview.Text;
+        var start = rtbPreview.SelectionStart;
+        var length = rtbPreview.SelectionLength;
+        var from = LineStart(text, start);
+        var endIndex = length == 0 ? start : Math.Max(start, start + length - 1);
+        var to = LineEnd(text, endIndex);
+        var changed = string.Join("\n", text[from..to].Split('\n').Select(transform));
+        rtbPreview.Select(from, to - from);
+        rtbPreview.SelectedText = changed;
+        rtbPreview.Select(from, changed.Length);
         rtbPreview.Focus();
     }
 
     private void ToggleStyle(FontStyle style) {
         if (_mode != ViewMode.Real)
             return;
+        SelectNextWord();
+        if (style == FontStyle.Bold && SelectionIsHeading())
+            ClearHeadingStyle();
         var current = rtbPreview.SelectionFont;
         var family = current?.FontFamily.Name ?? "Segoe UI";
         var size = current?.Size ?? 12f;
@@ -390,9 +686,42 @@ public partial class FormMain : Form {
         rtbPreview.Focus();
     }
 
+    private bool SelectionIsHeading() {
+        var savedStart = rtbPreview.SelectionStart;
+        var savedLength = rtbPreview.SelectionLength;
+        if (savedLength == 0)
+            return false;
+        rtbPreview.Select(savedStart, 1);
+        var size = rtbPreview.SelectionFont?.Size ?? 0f;
+        rtbPreview.Select(savedStart, savedLength);
+        return size >= 16f;
+    }
+
+    private void ClearHeadingStyle() {
+        var text = rtbPreview.Text;
+        var wordStart = rtbPreview.SelectionStart;
+        var wordLength = rtbPreview.SelectionLength;
+        var from = LineStart(text, wordStart);
+        var to = LineEnd(text, wordStart);
+        rtbPreview.Select(from, Math.Max(0, to - from));
+        rtbPreview.SelectionFont = new Font("Segoe UI", 12f, FontStyle.Regular);
+        rtbPreview.SelectionBackColor = _dark ? Color.Black : Color.White;
+        rtbPreview.SelectionColor = _dark ? Color.White : Color.FromArgb(28, 28, 28);
+        var format = new TitleParagraph {
+            rgxTabs = new int[32],
+            dwMask = 0x40 | 0x80,
+            dySpaceBefore = 0,
+            dySpaceAfter = 0
+        };
+        format.cbSize = Marshal.SizeOf(format);
+        SendMessage(rtbPreview.Handle, 0x447, IntPtr.Zero, ref format);
+        rtbPreview.Select(wordStart, wordLength);
+    }
+
     private void FormatParagraph(float size, FontStyle style, bool bullet) {
         if (_mode != ViewMode.Real)
             return;
+        SelectNextWord();
         var text = rtbPreview.Text;
         var start = rtbPreview.SelectionStart;
         var length = rtbPreview.SelectionLength;
@@ -471,6 +800,32 @@ public partial class FormMain : Form {
         public int Bottom;
     }
 
+    private void SelectNextWord() {
+        if (rtbPreview.SelectionLength > 0)
+            return;
+        var text = rtbPreview.Text;
+        var start = Math.Clamp(rtbPreview.SelectionStart, 0, text.Length);
+        if (start < text.Length && IsWordChar(text[start])) {
+            while (start > 0 && IsWordChar(text[start - 1]))
+                start--;
+        }
+        else {
+            while (start < text.Length && !IsWordChar(text[start]))
+                start++;
+        }
+
+        if (start >= text.Length)
+            return;
+        var end = start + 1;
+        while (end < text.Length && IsWordChar(text[end]))
+            end++;
+        rtbPreview.Select(start, end - start);
+    }
+
+    private static bool IsWordChar(char c) {
+        return char.IsLetterOrDigit(c) || c is '_' or '\'' or '-';
+    }
+
     private static int LineStart(string text, int index) {
         var i = Math.Clamp(index, 0, text.Length);
         var newline = text.LastIndexOf('\n', Math.Max(0, i - 1));
@@ -484,13 +839,20 @@ public partial class FormMain : Form {
     }
 
     private void InsertRichTarget(bool image) {
-        if (_mode != ViewMode.Real)
-            return;
         var selected = rtbPreview.SelectedText.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
         var picked = FormMarkdownTarget.Prompt(this, image, selected);
         rtbPreview.Focus();
         if (picked is null)
             return;
+        if (_mode == ViewMode.Edit) {
+            var definition = picked.Value.Definition.Replace("]", "\\]");
+            var url = picked.Value.Url;
+            rtbPreview.SelectedText = image
+                ? "![" + definition + "](" + url + ")"
+                : "[" + definition + "](" + url + ")";
+            return;
+        }
+
         var snippet = image
             ? RichMarkdown.ImageRtf(picked.Value.Definition, picked.Value.Url, _dark)
             : RichMarkdown.LinkRtf(picked.Value.Definition, picked.Value.Url);
@@ -512,7 +874,7 @@ public partial class FormMain : Form {
         else if (_mode == ViewMode.Real) {
             if (rtbPreview.Rtf != _shownRtf) {
                 _realEdited = true;
-                _shownRtf = rtbPreview.Rtf;
+                _shownRtf = rtbPreview.Rtf ?? "";
                 _markdown = Normalize(RichMarkdown.FromRtf(rtbPreview.Rtf));
             }
 
@@ -648,7 +1010,7 @@ public partial class FormMain : Form {
         }
     }
 
-    private void Capture() {
+    private void CaptureMarkdown() {
         if (_mode == ViewMode.Edit)
             _markdown = Normalize(rtbPreview.Text);
         else if (_mode == ViewMode.Real && _realEdited)
@@ -660,6 +1022,7 @@ public partial class FormMain : Form {
         try {
             rtbPreview.WordWrap = false;
             rtbPreview.Font = _plainFont;
+            HealBreaks();
             rtbPreview.Text = _markdown;
             ApplyEditorColors(false);
         }
@@ -674,9 +1037,10 @@ public partial class FormMain : Form {
             rtbPreview.WordWrap = true;
             rtbPreview.Font = _richFont;
             ApplyEditorColors(true);
+            HealBreaks();
             rtbPreview.Rtf = RichMarkdown.ToRtf(_markdown, _dark);
             ApplyEditorColors(true);
-            _shownRtf = rtbPreview.Rtf;
+            _shownRtf = rtbPreview.Rtf ?? "";
         }
         finally {
             _suppress = false;
@@ -711,6 +1075,14 @@ public partial class FormMain : Form {
         rtbPreview.SelectAll();
         rtbPreview.SelectionColor = fore;
         rtbPreview.Select(start, length);
+    }
+
+    private void HealBreaks() {
+        var healed = RichMarkdown.HealBreakLines(_markdown);
+        if (healed == _markdown)
+            return;
+        _markdown = healed;
+        btnSave.Enabled = _markdown != _savedText;
     }
 
     private static string Normalize(string? text) {

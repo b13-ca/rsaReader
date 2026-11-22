@@ -8,10 +8,7 @@ using Markdig.Syntax.Inlines;
 namespace rsaReader;
 
 internal static class RichMarkdown {
-    private const char HardBreak = '\uE000';
     private const string HardBreakMark = "\\v br:\\v0 ";
-
-    public const string HardBreakRtf = "{\\rtf1\\ansi\\v br:\\v0\\line}";
 
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
@@ -232,13 +229,14 @@ internal static class RichMarkdown {
                 break;
             case LineBreakInline line:
                 if (line.IsHard)
-                    rtf.Append(HardBreakMark);
-                rtf.Append("\\line ");
+                    AppendHardBreak(rtf);
+                else
+                    rtf.Append("\\line ");
                 break;
             case CodeInline code:
-                rtf.Append("\\f1\\fs22 ");
+                rtf.Append("\\f1\\fs22\\highlight2\\cb2 ");
                 AppendText(rtf, code.Content);
-                rtf.Append("\\f0\\fs24 ");
+                rtf.Append("\\highlight0\\cb0\\f0\\fs24 ");
                 if (bold)
                     rtf.Append("\\b");
                 if (italic)
@@ -276,8 +274,7 @@ internal static class RichMarkdown {
                 AppendLiteral(rtf, entity.Transcoded.ToString());
                 break;
             case HtmlInline html when html.Tag.StartsWith("<br", StringComparison.OrdinalIgnoreCase):
-                rtf.Append(HardBreakMark);
-                rtf.Append("\\line ");
+                AppendHardBreak(rtf);
                 break;
             case ContainerInline container:
                 RenderInline(rtf, container, bold, italic);
@@ -446,18 +443,18 @@ internal static class RichMarkdown {
         return text.ToString();
     }
 
+    private static void AppendHardBreak(StringBuilder rtf) {
+        rtf.Append(HardBreakMark);
+        rtf.Append("\\line ");
+    }
+
     private static void AppendGap(StringBuilder rtf, int? gap) {
         if (gap is int count)
             rtf.Append("\\v gap:").Append(count).Append("\\v0 ");
     }
 
     private static void AppendLiteral(StringBuilder rtf, string text) {
-        var parts = text.Split(HardBreak);
-        for (var i = 0; i < parts.Length; i++) {
-            if (i > 0)
-                rtf.Append("\\line ");
-            AppendText(rtf, parts[i]);
-        }
+        AppendText(rtf, text);
     }
 
     private static void AppendText(StringBuilder rtf, string text) {
@@ -506,6 +503,32 @@ internal static class RichMarkdown {
                 _previousEnd = span.End;
             return gap;
         }
+    }
+
+    public static string HealBreakLines(string? markdown) {
+        var lines = (markdown ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var fence = "";
+        var changed = false;
+        for (var i = 0; i < lines.Length; i++) {
+            var trimmed = lines[i].TrimStart();
+            if (fence.Length > 0) {
+                if (trimmed.StartsWith(fence, StringComparison.Ordinal))
+                    fence = "";
+                continue;
+            }
+
+            if (trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith("~~~", StringComparison.Ordinal)) {
+                fence = trimmed[..3];
+                continue;
+            }
+
+            if (lines[i] == "\\") {
+                lines[i] = "  ";
+                changed = true;
+            }
+        }
+
+        return changed ? string.Join("\n", lines) : markdown ?? "";
     }
 
     private static string Source(string markdown, Block block) {

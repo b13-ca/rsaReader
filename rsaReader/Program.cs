@@ -27,7 +27,12 @@ internal static class Program {
             string? aesKeyHex = null;
             if (!string.IsNullOrWhiteSpace(documentPath)) {
                 var emptyFile = File.Exists(documentPath) && new FileInfo(documentPath).Length == 0;
-                if (!emptyFile) {
+                if (!emptyFile && FormMain.IsPlainNote(documentPath)) {
+                    data = FormMain.ReadPlain(null, documentPath);
+                    if (data is null)
+                        documentPath = null;
+                }
+                else if (!emptyFile) {
                     var opened = FormMain.ReadDocument(null, documentPath);
                     if (opened is null)
                         documentPath = null;
