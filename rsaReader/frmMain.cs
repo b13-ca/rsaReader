@@ -1,10 +1,20 @@
 using System.Reflection;
+using System.Text.Json;
 using CefSharp;
 
+// You must do a publish to have a single .exe file with all the dependencies.
+// The CefSharp.WinForms package is not enough to run the application, 
+// you need to include the CefSharp.Common and CefSharp.WinForms packages as well.
 namespace rsaReader;
 
 public partial class FormMain : Form {
-    private bool _previewOpen;
+    private enum ViewMode {
+        Edit,
+        Preview,
+        Real
+    }
+
+    private ViewMode _mode;
     private bool _previewReady;
     private bool _previewInitStarted;
     private bool _emptyPreviewLoaded;
@@ -15,14 +25,17 @@ public partial class FormMain : Form {
     private string _savedText = "";
     private bool _suppressDirty;
     private bool _preparedPreview;
+    private readonly System.Windows.Forms.Timer _previewTimer = new() { Interval = 100 };
 
     public FormMain() {
         InitializeComponent();
+        _previewTimer.Tick += PreviewTimer_Tick;
         PrepareEditor();
     }
 
     public FormMain(string? documentPath, string? data, string? keyHex, string? aesKeyHex) {
         InitializeComponent();
+        _previewTimer.Tick += PreviewTimer_Tick;
         if (!string.IsNullOrWhiteSpace(documentPath) && data is not null) {
             _keyHex = keyHex;
             _aesKeyHex = aesKeyHex;
@@ -41,8 +54,10 @@ public partial class FormMain : Form {
 
     protected override void OnShown(EventArgs e) {
         base.OnShown(e);
-        if (!_previewOpen)
-            FocusEditor();
+        if (_mode == ViewMode.Edit)
+            FocusEditor(true);
+        else if (_mode == ViewMode.Real)
+            FocusEditor(false);
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData) {
@@ -60,6 +75,8 @@ public partial class FormMain : Form {
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e) {
+        _previewTimer.Stop();
+        _previewTimer.Dispose();
         _keyHex = null;
         _aesKeyHex = null;
         AppSession.Clear();
@@ -252,10 +269,6 @@ public partial class FormMain : Form {
 
     private void PrepareEditor(string? path = null) {
         _preparedPreview = false;
-        btnPreview.Text = "Preview";
-        pnlPreview.Enabled = false;
-        pnlEditor.Enabled = true;
-        pnlEditor.BringToFront();
         if (string.IsNullOrWhiteSpace(path))
             return;
 
@@ -273,43 +286,88 @@ public partial class FormMain : Form {
         btnSave.Enabled = false;
         Text = "rsaReader - " + Path.GetFileName(path);
         _suppressDirty = false;
-        btnPreview.Text = "Edit";
         webPreview.Visible = false;
-        pnlEditor.Enabled = false;
-        pnlPreview.Enabled = true;
-        pnlPreview.BringToFront();
+    }
+
+    private void btnEdit_Click(object sender, EventArgs e) {
+        if (_mode != ViewMode.Edit)
+            ShowEditor();
     }
 
     private void btnPreview_Click(object sender, EventArgs e) {
-        if (_previewOpen)
-            ShowEditor();
-        else
+        if (_mode != ViewMode.Preview)
             ShowPreview();
     }
 
+    private void btnReal_Click(object sender, EventArgs e) {
+        if (_mode != ViewMode.Real)
+            ShowReal();
+    }
+
     private void ShowPreview() {
-        _previewOpen = true;
-        btnPreview.Text = "Edit";
-        pnlEditor.Enabled = false;
-        pnlPreview.Enabled = true;
-        pnlPreview.BringToFront();
-        webPreview.Visible = _emptyPreviewLoaded;
+        _mode = ViewMode.Preview;
+        ApplyMode();
         EnsurePreview();
         if (_emptyPreviewLoaded)
             RenderPreview();
     }
 
     private void ShowEditor() {
-        _previewOpen = false;
-        btnPreview.Text = "Preview";
-        pnlPreview.Enabled = false;
-        pnlEditor.Enabled = true;
-        pnlEditor.BringToFront();
-        FocusEditor();
+        _mode = ViewMode.Edit;
+        ApplyMode();
+        FocusEditor(true);
     }
 
-    private void FocusEditor() {
+    private void ShowReal() {
+        _mode = ViewMode.Real;
+        ApplyMode();
+        EnsurePreview();
+        if (_emptyPreviewLoaded)
+            RenderPreview();
+        FocusEditor(false);
+    }
+
+    private void ApplyMode() {
+        var edit = _mode == ViewMode.Edit;
+        var preview = _mode == ViewMode.Preview;
+        pnlTools.Enabled = _mode == ViewMode.Real;
+        pnlEditor.Enabled = !preview;
+        pnlPreview.Enabled = !edit;
+        if (preview) {
+            splitView.Panel2Collapsed = false;
+            splitView.Panel1Collapsed = true;
+        }
+        else if (edit) {
+            splitView.Panel1Collapsed = false;
+            splitView.Panel2Collapsed = true;
+        }
+        else {
+            splitView.Panel1Collapsed = false;
+            splitView.Panel2Collapsed = false;
+        }
+
+        if (edit || lblPreview.Visible)
+            webPreview.Visible = false;
+        else if (_emptyPreviewLoaded)
+            webPreview.Visible = true;
+
+        StyleModeButton(btnEdit, edit);
+        StyleModeButton(btnPreview, preview);
+        StyleModeButton(btnReal, _mode == ViewMode.Real);
+    }
+
+    private static void StyleModeButton(Button button, bool active) {
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderColor = active ? Color.FromArgb(70, 120, 180) : SystemColors.ControlDark;
+        button.FlatAppearance.BorderSize = active ? 2 : 1;
+        button.BackColor = active ? Color.FromArgb(220, 232, 246) : SystemColors.Control;
+    }
+
+    private void FocusEditor(bool moveToStart) {
         txtEditor.Focus();
+        if (!moveToStart)
+            return;
+
         txtEditor.SelectionStart = 0;
         txtEditor.SelectionLength = 0;
         if (IsHandleCreated)
@@ -317,8 +375,148 @@ public partial class FormMain : Form {
     }
 
     private void ClearEditorSelection() {
+        if (_mode != ViewMode.Edit)
+            return;
+
         txtEditor.SelectionStart = 0;
         txtEditor.SelectionLength = 0;
+    }
+
+    private void pnlTools_Paint(object sender, PaintEventArgs e) {
+        using var pen = new Pen(SystemColors.ControlDark);
+        e.Graphics.DrawLine(pen, 0, 0, pnlTools.Width, 0);
+    }
+
+    private void btnBold_Click(object sender, EventArgs e) {
+        WrapSelection("**", "**");
+    }
+
+    private void btnH1_Click(object sender, EventArgs e) {
+        PrefixLines("# ");
+    }
+
+    private void btnH2_Click(object sender, EventArgs e) {
+        PrefixLines("## ");
+    }
+
+    private void btnBullet_Click(object sender, EventArgs e) {
+        PrefixLines("- ");
+    }
+
+    private void btnLink_Click(object sender, EventArgs e) {
+        InsertTarget(false);
+    }
+
+    private void btnImage_Click(object sender, EventArgs e) {
+        InsertTarget(true);
+    }
+
+    private void btnCode_Click(object sender, EventArgs e) {
+        InsertCodeFence();
+    }
+
+    private void btnBreak_Click(object sender, EventArgs e) {
+        InsertHardBreak();
+    }
+
+    private void WrapSelection(string prefix, string suffix) {
+        var start = txtEditor.SelectionStart;
+        var length = txtEditor.SelectionLength;
+        txtEditor.SelectedText = prefix + txtEditor.SelectedText + suffix;
+        txtEditor.Select(start + prefix.Length, length);
+        txtEditor.Focus();
+    }
+
+    private void PrefixLines(string marker) {
+        var text = txtEditor.Text;
+        var selStart = txtEditor.SelectionStart;
+        var selLength = txtEditor.SelectionLength;
+        var from = LineStart(text, selStart);
+        var endIndex = selLength == 0 ? selStart : selStart + selLength;
+        if (selLength > 0 && endIndex > from && LineStart(text, endIndex) == endIndex)
+            endIndex--;
+
+        var to = LineContentEnd(text, endIndex);
+        var lines = text[from..to].Split('\n');
+        for (var i = 0; i < lines.Length; i++) {
+            var line = lines[i].EndsWith('\r') ? lines[i][..^1] : lines[i];
+            lines[i] = marker + line;
+        }
+
+        var rebuilt = string.Join("\r\n", lines);
+        txtEditor.Select(from, to - from);
+        txtEditor.SelectedText = rebuilt;
+        if (selLength == 0)
+            txtEditor.Select(from + marker.Length, 0);
+        else
+            txtEditor.Select(from, rebuilt.Length);
+
+        txtEditor.Focus();
+    }
+
+    private static int LineStart(string text, int index) {
+        var i = Math.Clamp(index, 0, text.Length);
+        var newline = text.LastIndexOf('\n', Math.Max(0, i - 1));
+        return newline < 0 ? 0 : newline + 1;
+    }
+
+    private static int LineContentEnd(string text, int index) {
+        var from = Math.Clamp(index, 0, text.Length);
+        var newline = text.IndexOf('\n', from);
+        if (newline < 0)
+            return text.Length;
+        if (newline > 0 && text[newline - 1] == '\r')
+            return newline - 1;
+        return newline;
+    }
+
+    private void InsertCodeFence() {
+        var text = txtEditor.Text;
+        var start = txtEditor.SelectionStart;
+        var length = txtEditor.SelectionLength;
+        var selected = txtEditor.SelectedText.Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", "\r\n");
+        var atLineStart = start == 0 || text[start - 1] == '\n';
+        var after = start + length;
+        var atLineEnd = after >= text.Length || text[after] == '\r' || text[after] == '\n';
+        var insertion = new System.Text.StringBuilder();
+        if (!atLineStart)
+            insertion.Append("\r\n");
+        insertion.Append("```\r\n");
+        insertion.Append(selected);
+        if (!selected.EndsWith("\r\n", StringComparison.Ordinal))
+            insertion.Append("\r\n");
+        insertion.Append("```");
+        if (!atLineEnd)
+            insertion.Append("\r\n");
+
+        var value = insertion.ToString();
+        var inner = (atLineStart ? 0 : 2) + "```\r\n".Length;
+        txtEditor.SelectedText = value;
+        txtEditor.Select(start + inner, selected.Length);
+        txtEditor.Focus();
+    }
+
+    private void InsertHardBreak() {
+        var text = txtEditor.Text;
+        var at = txtEditor.SelectionStart + txtEditor.SelectionLength;
+        var needsLeadingBreak = at > 0 && text[at - 1] != '\n';
+        var insert = (needsLeadingBreak ? "\r\n" : "") + "  \r\n";
+        txtEditor.Select(at, 0);
+        txtEditor.SelectedText = insert;
+        txtEditor.Select(at + insert.Length, 0);
+        txtEditor.Focus();
+    }
+
+    private void InsertTarget(bool image) {
+        var picked = FormMarkdownTarget.Prompt(this, image, txtEditor.SelectedText);
+        txtEditor.Focus();
+        if (picked is null)
+            return;
+
+        var markdown = (image ? "!" : "") + "[" + picked.Value.Definition + "](" + picked.Value.Url + ")";
+        var start = txtEditor.SelectionStart;
+        txtEditor.SelectedText = markdown;
+        txtEditor.Select(start, markdown.Length);
     }
 
     private void pnlEditor_MouseDown(object sender, MouseEventArgs e) {
@@ -326,8 +524,23 @@ public partial class FormMain : Form {
     }
 
     private void txtEditor_TextChanged(object sender, EventArgs e) {
-        if (!_suppressDirty)
-            btnSave.Enabled = txtEditor.Text != _savedText;
+        if (_suppressDirty)
+            return;
+
+        btnSave.Enabled = txtEditor.Text != _savedText;
+        if (_mode == ViewMode.Real)
+            SchedulePreview();
+    }
+
+    private void SchedulePreview() {
+        if (!_previewTimer.Enabled)
+            _previewTimer.Start();
+    }
+
+    private void PreviewTimer_Tick(object? sender, EventArgs e) {
+        _previewTimer.Stop();
+        if (_mode == ViewMode.Real)
+            RenderPreview();
     }
 
     private void EnsurePreview() {
@@ -406,7 +619,7 @@ public partial class FormMain : Form {
     }
 
     private void ShowLoadedPreview() {
-        if (_previewOpen)
+        if (_mode != ViewMode.Edit && !lblPreview.Visible)
             webPreview.Visible = true;
 
         RenderPreview();
@@ -420,8 +633,14 @@ public partial class FormMain : Form {
     }
 
     private void RenderPreview() {
-        if (!_previewReady)
+        if (!_previewReady || !webPreview.IsBrowserInitialized)
             return;
+
+        var body = MarkdownPreview.ToBody(txtEditor.Text);
+        if (_emptyPreviewLoaded && webPreview.CanExecuteJavascriptInMainFrame) {
+            webPreview.ExecuteScriptAsync("document.body.innerHTML = " + JsonSerializer.Serialize(body) + ";");
+            return;
+        }
 
         webPreview.LoadHtml(MarkdownPreview.ToDocument(txtEditor.Text), MarkdownPreview.PreviewUrl);
     }

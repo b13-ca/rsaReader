@@ -12,8 +12,12 @@ internal static class MarkdownPreview {
         .DisableHtml()
         .Build();
 
+    public static string ToBody(string markdown) {
+        return Markdown.ToHtml(MarkHardBreaks(markdown), Pipeline).Replace(HardBreak.ToString(), "<br>");
+    }
+
     public static string ToDocument(string markdown) {
-        var body = Markdown.ToHtml(MarkHardBreaks(markdown), Pipeline).Replace(HardBreak.ToString(), "<br>");
+        var body = ToBody(markdown);
         return """
             <!DOCTYPE html>
             <html>
