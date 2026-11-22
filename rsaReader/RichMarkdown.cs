@@ -31,8 +31,30 @@ internal static class RichMarkdown {
         }
     }
 
+    public static int SourceIndex(string? actualText, int caret, int markdownLength) {
+        return _map.SourceIndex(actualText ?? "", caret, markdownLength);
+    }
+
+    public static int ControlCaret(string? actualText, int markdownIndex) {
+        return _map.ControlCaret(actualText ?? "", markdownIndex);
+    }
+
     private static string BuildRtf(string? markdown, bool dark) {
-        var source = KeepVisibleBreaks(markdown ?? "");
+        var text = markdown ?? "";
+        var source = KeepVisibleBreaks(text, out var origin);
+        _origin = origin;
+        _originLength = text.Length;
+        _carets = new CaretMap();
+        try {
+            return BuildDocument(source, dark);
+        }
+        finally {
+            _map = _carets ?? new CaretMap();
+            _carets = null;
+        }
+    }
+
+    private static string BuildDocument(string source, bool dark) {
         var document = Markdown.Parse(source, Pipeline);
         var rtf = new StringBuilder();
         var map = new SourceMap(source);
@@ -47,6 +69,27 @@ internal static class RichMarkdown {
             rtf.Append("\\pard\\f0\\fs24\\par");
         rtf.Append('}');
         return rtf.ToString();
+    }
+
+    private static int[] _origin = Array.Empty<int>();
+    private static int _originLength;
+    private static CaretMap? _carets;
+    private static CaretMap _map = new();
+
+    private static int Here(int renderIndex) {
+        if (renderIndex < 0)
+            return 0;
+        if ((uint)renderIndex >= (uint)_origin.Length)
+            return _originLength;
+        return _origin[renderIndex];
+    }
+
+    private static int BlockStart(MarkdownObject block) {
+        return block.Span.IsEmpty ? 0 : Here(block.Span.Start);
+    }
+
+    private static int BlockEnd(Block block) {
+        return block.Span.IsEmpty ? _originLength : Here(block.Span.End + 1);
     }
 
     public static string FromRtf(string? rtf) {
@@ -81,16 +124,16 @@ internal static class RichMarkdown {
     private static void RenderBlock(StringBuilder rtf, SourceMap map, Block block, int depth) {
         switch (block) {
             case HeadingBlock heading:
-                RenderParagraph(rtf, heading.Inline, HeadingSize(heading.Level), FontStyleKind.Bold, false, 0, null, map.Take(heading));
+                RenderParagraph(rtf, heading.Inline, HeadingSize(heading.Level), FontStyleKind.Bold, false, 0, null, map.Take(heading), BlockStart(heading), BlockEnd(heading));
                 break;
             case ParagraphBlock paragraph:
-                RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, false, depth, null, map.Take(paragraph));
+                RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, false, depth, null, map.Take(paragraph), BlockStart(paragraph), BlockEnd(paragraph));
                 break;
             case ListBlock list:
                 RenderList(rtf, map, list, depth);
                 break;
             case FencedCodeBlock or CodeBlock:
-                RenderCode(rtf, block is LeafBlock leaf ? leaf.Lines.ToString() : "", map.Take(block));
+                RenderCode(rtf, (LeafBlock)block, map.Take(block));
                 break;
             case QuoteBlock quote:
                 foreach (var child in quote)
@@ -98,8 +141,9 @@ internal static class RichMarkdown {
                 break;
             case ThematicBreakBlock:
                 rtf.Append("\\pard\\f0\\fs24 ");
-                AppendGap(rtf, map.Take(block));
-                rtf.Append("---\\par");
+                AppendGap(rtf, map.Take(block), BlockStart(block));
+                WritePlain(rtf, "---", BlockStart(block));
+                EndBlock(rtf, BlockEnd(block));
                 break;
             default:
                 RenderKept(rtf, map, block);
@@ -115,7 +159,7 @@ internal static class RichMarkdown {
         }
 
         if (block is ParagraphBlock paragraph) {
-            RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, false, depth, new string('>', quotes) + " ", map.Take(paragraph));
+            RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, false, depth, new string('>', quotes) + " ", map.Take(paragraph), BlockStart(paragraph), BlockEnd(paragraph));
             return;
         }
 
@@ -133,7 +177,7 @@ internal static class RichMarkdown {
             var first = true;
             foreach (var child in item) {
                 if (child is ParagraphBlock paragraph && first) {
-                    RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, !list.IsOrdered, depth, task ? (taskChecked ? "1" : "0") : marker, map.Take(paragraph));
+                    RenderParagraph(rtf, paragraph.Inline, 24, FontStyleKind.None, !list.IsOrdered, depth, task ? (taskChecked ? "1" : "0") : marker, map.Take(paragraph), BlockStart(paragraph), BlockEnd(paragraph));
                     first = false;
                 }
                 else if (child is ListBlock nested)
@@ -157,37 +201,41 @@ internal static class RichMarkdown {
         return true;
     }
 
-    private static void RenderCode(StringBuilder rtf, string code, int? gap) {
+    private static void RenderCode(StringBuilder rtf, LeafBlock block, int? gap) {
         rtf.Append("\\pard\\highlight2\\cb2\\f1\\fs22 ");
-        AppendGap(rtf, gap);
-        var lines = code.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-        for (var i = 0; i < lines.Length; i++) {
-            if (i > 0)
-                rtf.Append("\\line ");
-            AppendText(rtf, lines[i]);
+        AppendGap(rtf, gap, BlockStart(block));
+        var lines = block.Lines;
+        for (var i = 0; i < lines.Count; i++) {
+            if (i > 0) {
+                var previous = lines.Lines[i - 1];
+                WriteChar(rtf, '\n', Here(previous.Position + previous.ToString().Length));
+            }
+
+            var line = lines.Lines[i];
+            var text = line.ToString();
+            for (var c = 0; c < text.Length; c++)
+                WriteChar(rtf, text[c], Here(line.Position + c));
         }
 
-        rtf.Append("\\highlight0\\cb0\\f0\\fs24\\par");
+        rtf.Append("\\highlight0\\cb0\\f0\\fs24");
+        EndBlock(rtf, BlockEnd(block));
     }
 
     private static void RenderKept(StringBuilder rtf, SourceMap map, Block block) {
         var text = Source(map.Text, block);
         if (text.Length == 0)
             return;
+        var start = BlockStart(block);
         rtf.Append("\\pard\\f0\\fs24 ");
-        AppendGap(rtf, map.Take(block));
+        AppendGap(rtf, map.Take(block), start);
         rtf.Append("\\v keep:\\v0 ");
-        var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-        for (var i = 0; i < lines.Length; i++) {
-            if (i > 0)
-                rtf.Append("\\line ");
-            AppendText(rtf, lines[i]);
-        }
-
-        rtf.Append("\\par");
+        _carets?.Add("keep:", start, true);
+        for (var c = 0; c < text.Length; c++)
+            WriteChar(rtf, text[c], Here(block.Span.Start + c));
+        EndBlock(rtf, BlockEnd(block));
     }
 
-    private static void RenderParagraph(StringBuilder rtf, ContainerInline? inline, int halfPoints, FontStyleKind style, bool bullet, int depth, string? marker, int? gap) {
+    private static void RenderParagraph(StringBuilder rtf, ContainerInline? inline, int halfPoints, FontStyleKind style, bool bullet, int depth, string? marker, int? gap, int start, int end) {
         var indent = 360 * Math.Max(depth, bullet ? 1 : 0);
         rtf.Append("\\pard");
         if (halfPoints >= 26)
@@ -205,18 +253,21 @@ internal static class RichMarkdown {
         if (style == FontStyleKind.Italic)
             rtf.Append("\\i");
         rtf.Append(' ');
-        AppendGap(rtf, gap);
-        if (marker is "0" or "1")
-            rtf.Append("\\v task:").Append(marker).Append("\\v0 ");
+        AppendGap(rtf, gap, start);
+        if (marker is "0" or "1") {
+            var label = "task:" + marker;
+            rtf.Append("\\v ").Append(label).Append("\\v0 ");
+            _carets?.Add(label, start, true);
+        }
         else if (!string.IsNullOrEmpty(marker))
-            AppendText(rtf, marker);
+            WritePlain(rtf, marker, start);
         if (inline is not null)
             RenderInline(rtf, inline, style == FontStyleKind.Bold, style == FontStyleKind.Italic);
         if (style == FontStyleKind.Bold)
             rtf.Append("\\b0");
         if (style == FontStyleKind.Italic)
             rtf.Append("\\i0");
-        rtf.Append("\\par");
+        EndBlock(rtf, end);
     }
 
     private static void RenderInline(StringBuilder rtf, ContainerInline inline, bool bold, bool italic) {
@@ -227,17 +278,17 @@ internal static class RichMarkdown {
     private static void RenderOne(StringBuilder rtf, Inline inline, bool bold, bool italic) {
         switch (inline) {
             case LiteralInline literal:
-                AppendLiteral(rtf, literal.Content.ToString());
+                WriteSpan(rtf, literal.Content.ToString(), literal.Span);
                 break;
             case LineBreakInline line:
                 if (line.IsHard)
-                    AppendHardBreak(rtf);
+                    AppendHardBreak(rtf, Here(line.Span.End + 1));
                 else
-                    rtf.Append("\\line ");
+                    WriteChar(rtf, '\n', Here(line.Span.Start));
                 break;
             case CodeInline code:
                 rtf.Append("\\f1\\fs22\\highlight2\\cb2 ");
-                AppendText(rtf, code.Content);
+                WriteCode(rtf, code);
                 rtf.Append("\\highlight0\\cb0\\f0\\fs24 ");
                 if (bold)
                     rtf.Append("\\b");
@@ -262,21 +313,21 @@ internal static class RichMarkdown {
                     rtf.Append("\\i ");
                 break;
             case LinkInline link when link.IsImage:
-                RenderImage(rtf, InlineText(link), link.Url ?? "");
+                RenderImage(rtf, InlineText(link), link.Url ?? "", BlockStart(link));
                 break;
             case LinkInline link:
-                RenderLink(rtf, link);
+                RenderLink(rtf, link, BlockStart(link));
                 break;
             case Markdig.Extensions.TaskLists.TaskList:
                 break;
             case AutolinkInline autolink:
-                RenderLink(rtf, autolink.Url, autolink.Url);
+                RenderLink(rtf, autolink.Url, autolink.Url, BlockStart(autolink));
                 break;
             case HtmlEntityInline entity:
-                AppendLiteral(rtf, entity.Transcoded.ToString());
+                WritePlain(rtf, entity.Transcoded.ToString(), BlockStart(entity));
                 break;
             case HtmlInline html when html.Tag.StartsWith("<br", StringComparison.OrdinalIgnoreCase):
-                AppendHardBreak(rtf);
+                AppendHardBreak(rtf, Here(html.Span.End + 1));
                 break;
             case ContainerInline container:
                 RenderInline(rtf, container, bold, italic);
@@ -284,39 +335,43 @@ internal static class RichMarkdown {
         }
     }
 
-    private static void RenderLink(StringBuilder rtf, LinkInline link) {
+    private static void RenderLink(StringBuilder rtf, LinkInline link, int index) {
         var text = new StringBuilder();
         CollectPlain(link, text);
-        RenderLink(rtf, text.ToString(), link.Url ?? "");
+        RenderLink(rtf, text.ToString(), link.Url ?? "", index);
     }
 
-    private static void RenderLink(StringBuilder rtf, string text, string url) {
+    private static void RenderLink(StringBuilder rtf, string text, string url, int index = 0) {
         if (text.Length == 0)
             text = url;
-        AppendMarker(rtf, "lnk:", text, url);
-        AppendLinkField(rtf, text, url);
+        AppendMarker(rtf, "lnk:", text, url, index);
+        AppendLinkField(rtf, text, url, index);
     }
 
-    private static void AppendLinkField(StringBuilder rtf, string text, string url) {
+    private static void AppendLinkField(StringBuilder rtf, string text, string url, int index) {
         rtf.Append("{\\field{\\*\\fldinst{HYPERLINK \"");
         AppendText(rtf, url);
         rtf.Append("\"}}{\\fldrslt{\\ul\\cf1 ");
-        AppendText(rtf, text);
+        WritePlain(rtf, text, index);
         rtf.Append("\\ul0\\cf0}}}");
     }
 
-    private static void AppendMarker(StringBuilder rtf, string kind, string text, string url) {
+    private static void AppendMarker(StringBuilder rtf, string kind, string text, string url, int index) {
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(text + "\n" + url));
-        rtf.Append("\\v ").Append(kind).Append(payload).Append("\\v0 ");
+        var label = kind + payload;
+        rtf.Append("\\v ").Append(label).Append("\\v0 ");
+        _carets?.Add(label, index, true);
     }
 
-    private static void RenderImage(StringBuilder rtf, string alt, string url) {
-        AppendMarker(rtf, "img:", alt, url);
+    private static void RenderImage(StringBuilder rtf, string alt, string url, int index = 0) {
+        AppendMarker(rtf, "img:", alt, url, index);
         var picture = TryPicture(url);
-        if (picture is not null)
+        if (picture is not null) {
             rtf.Append(picture);
+            _carets?.Add('\uFFFC', index, false);
+        }
         else
-            AppendLinkField(rtf, string.IsNullOrEmpty(alt) ? url : alt, url);
+            AppendLinkField(rtf, string.IsNullOrEmpty(alt) ? url : alt, url, index);
     }
 
     private static string? TryPicture(string url) {
@@ -445,18 +500,79 @@ internal static class RichMarkdown {
         return text.ToString();
     }
 
-    private static void AppendHardBreak(StringBuilder rtf) {
+    private static void AppendHardBreak(StringBuilder rtf, int index) {
         rtf.Append(HardBreakMark);
         rtf.Append("\\line ");
+        _carets?.Add("br:", index, true);
+        _carets?.Add('\n', index, false, true);
     }
 
-    private static void AppendGap(StringBuilder rtf, int? gap) {
-        if (gap is int count)
-            rtf.Append("\\v gap:").Append(count).Append("\\v0 ");
+    private static void AppendGap(StringBuilder rtf, int? gap, int index) {
+        if (gap is int count) {
+            var label = "gap:" + count;
+            rtf.Append("\\v ").Append(label).Append("\\v0 ");
+            _carets?.Add(label, index, true);
+        }
     }
 
-    private static void AppendLiteral(StringBuilder rtf, string text) {
-        AppendText(rtf, text);
+    private static void EndBlock(StringBuilder rtf, int index) {
+        rtf.Append("\\par");
+        _carets?.Paragraph(index);
+    }
+
+    private static void WriteCode(StringBuilder rtf, CodeInline code) {
+        var content = code.Content;
+        var span = code.Span;
+        var start = 0;
+        if (!span.IsEmpty) {
+            start = span.Start;
+            var width = span.End - span.Start + 1;
+            if (width > content.Length)
+                start += (width - content.Length) / 2;
+        }
+
+        for (var i = 0; i < content.Length; i++)
+            WriteChar(rtf, content[i], Here(start + i));
+    }
+
+    private static void WriteSpan(StringBuilder rtf, string text, SourceSpan span) {
+        if (text.Length == 0)
+            return;
+        if (span.IsEmpty || span.End < span.Start || span.End - span.Start + 1 != text.Length) {
+            WritePlain(rtf, text, span.IsEmpty ? 0 : Here(span.Start));
+            return;
+        }
+
+        for (var i = 0; i < text.Length; i++)
+            WriteChar(rtf, text[i], Here(span.Start + i));
+    }
+
+    private static void WritePlain(StringBuilder rtf, string text, int index) {
+        foreach (var c in text)
+            WriteChar(rtf, c, index);
+    }
+
+    private static void WriteChar(StringBuilder rtf, char c, int index) {
+        switch (c) {
+            case '\\' or '{' or '}':
+                rtf.Append('\\').Append(c);
+                _carets?.Add(c, index, false);
+                break;
+            case '\n':
+                rtf.Append("\\line ");
+                _carets?.Add('\n', index, false);
+                break;
+            case '\r':
+            case '\u200B':
+                break;
+            default:
+                if (c < 128)
+                    rtf.Append(c);
+                else
+                    rtf.Append("\\u").Append((short)c).Append('?');
+                _carets?.Add(c, index, false);
+                break;
+        }
     }
 
     private static void AppendText(StringBuilder rtf, string text) {
@@ -508,39 +624,237 @@ internal static class RichMarkdown {
         }
     }
 
-    private static string KeepVisibleBreaks(string markdown) {
-        var lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+    private sealed class CaretMap {
+        private readonly List<Slot> _slots = new();
+        private bool _pending;
+        private int _pendingIndex;
+
+        public void Add(char c, int index, bool hidden, bool hard = false) {
+            Flush();
+            _slots.Add(new Slot(c, index, hidden, hard));
+        }
+
+        public void Add(string text, int index, bool hidden, bool hard = false) {
+            foreach (var c in text)
+                Add(c, index, hidden, hard && c == '\n');
+        }
+
+        public void Paragraph(int index) {
+            _pending = true;
+            _pendingIndex = index;
+        }
+
+        private void Flush() {
+            if (!_pending)
+                return;
+            _pending = false;
+            _slots.Add(new Slot('\n', _pendingIndex, false, false));
+        }
+
+        public int SourceIndex(string actual, int caret, int markdownLength) {
+            if (_slots.Count == 0)
+                return caret <= 0 ? 0 : markdownLength;
+            caret = Math.Clamp(caret, 0, actual.Length);
+            if (Same(actual))
+                return caret >= _slots.Count ? markdownLength : _slots[caret].Index;
+            var slot = Align(actual, caret);
+            if (caret >= actual.Length || slot >= _slots.Count)
+                return markdownLength;
+            return _slots[slot].Index;
+        }
+
+        public int ControlCaret(string actual, int markdownIndex) {
+            var predicted = _slots.Count;
+            for (var i = 0; i < _slots.Count; i++) {
+                var slot = _slots[i];
+                if (slot.Hidden || slot.Hard)
+                    continue;
+                if (slot.Index >= markdownIndex) {
+                    predicted = i;
+                    break;
+                }
+            }
+
+            if (Same(actual))
+                return Math.Min(predicted, actual.Length);
+            return MapPredicted(actual, predicted);
+        }
+
+        private bool Same(string actual) {
+            if (actual.Length != _slots.Count)
+                return false;
+            for (var i = 0; i < actual.Length; i++)
+                if (actual[i] != _slots[i].Char)
+                    return false;
+            return true;
+        }
+
+        private int Align(string actual, int caret) {
+            var actualAt = 0;
+            var slot = 0;
+            while (actualAt < caret && actualAt < actual.Length && slot < _slots.Count) {
+                if (actual[actualAt] == _slots[slot].Char) {
+                    actualAt++;
+                    slot++;
+                    continue;
+                }
+
+                var nextSlot = FindSlot(slot + 1, actual[actualAt]);
+                var nextActual = FindChar(actual, actualAt + 1, _slots[slot].Char);
+                if (nextSlot >= 0 && (nextActual < 0 || nextSlot - slot <= nextActual - actualAt))
+                    slot = nextSlot;
+                else if (nextActual >= 0)
+                    actualAt = nextActual;
+                else {
+                    actualAt++;
+                    slot++;
+                }
+            }
+
+            return slot;
+        }
+
+        private int MapPredicted(string actual, int predicted) {
+            var actualAt = 0;
+            var slot = 0;
+            while (slot < predicted && slot < _slots.Count && actualAt < actual.Length) {
+                if (actual[actualAt] == _slots[slot].Char) {
+                    actualAt++;
+                    slot++;
+                    continue;
+                }
+
+                var nextSlot = FindSlot(slot + 1, actual[actualAt]);
+                var nextActual = FindChar(actual, actualAt + 1, _slots[slot].Char);
+                if (nextSlot >= 0 && nextSlot <= predicted && (nextActual < 0 || nextSlot - slot <= nextActual - actualAt))
+                    slot = nextSlot;
+                else if (nextActual >= 0)
+                    actualAt = nextActual;
+                else {
+                    actualAt++;
+                    slot++;
+                }
+            }
+
+            return Math.Min(actualAt, actual.Length);
+        }
+
+        private int FindSlot(int start, char wanted) {
+            var end = Math.Min(_slots.Count, start + 32);
+            for (var i = start; i < end; i++)
+                if (_slots[i].Char == wanted)
+                    return i;
+            return -1;
+        }
+
+        private static int FindChar(string text, int start, char wanted) {
+            var end = Math.Min(text.Length, start + 32);
+            for (var i = start; i < end; i++)
+                if (text[i] == wanted)
+                    return i;
+            return -1;
+        }
+
+        private readonly record struct Slot(char Char, int Index, bool Hidden, bool Hard);
+    }
+
+    private static string KeepVisibleBreaks(string markdown, out int[] origin) {
+        var source = markdown;
+        int[]? raw = null;
+        if (markdown.IndexOf('\r') >= 0) {
+            var clean = new StringBuilder(markdown.Length);
+            var map = new List<int>(markdown.Length);
+            for (var n = 0; n < markdown.Length; n++) {
+                if (markdown[n] == '\r')
+                    continue;
+                clean.Append(markdown[n]);
+                map.Add(n);
+            }
+
+            source = clean.ToString();
+            raw = map.ToArray();
+        }
+
+        var lines = source.Split('\n');
+        var pieces = new List<Piece>(lines.Length);
         var fence = "";
-        var kept = new List<string>(lines.Length);
+        var cursor = 0;
         for (var i = 0; i < lines.Length; i++) {
             var line = lines[i];
+            var lineStart = cursor;
+            cursor += line.Length;
+            var newlineIndex = cursor;
+            var hasNewline = i < lines.Length - 1;
+            if (cursor < source.Length && source[cursor] == '\n')
+                cursor++;
+
             var trimmed = line.TrimStart();
-            if (fence.Length > 0) {
-                kept.Add(line);
+            var inside = fence.Length > 0;
+            if (inside) {
                 if (trimmed.StartsWith(fence, StringComparison.Ordinal))
                     fence = "";
-                continue;
             }
-
-            if (trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith("~~~", StringComparison.Ordinal)) {
+            else if (trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith("~~~", StringComparison.Ordinal))
                 fence = trimmed[..3];
-                kept.Add(line);
-                continue;
-            }
 
-            var hard = line.EndsWith("  ", StringComparison.Ordinal);
-            if (hard && line.Trim().Length == 0)
-                line = "\u200B" + line;
-            kept.Add(line);
+            var hard = !inside && fence.Length == 0 && line.EndsWith("  ", StringComparison.Ordinal);
+            if (inside)
+                hard = false;
+            pieces.Add(new Piece(line, lineStart, hard && line.Trim().Length == 0, false, lineStart, hasNewline, newlineIndex));
             if (!hard)
                 continue;
             var next = i + 1 < lines.Length ? lines[i + 1] : null;
-            if (next is null || next.Length == 0 || StartsNewBlock(next))
-                kept.Add("\u200B");
+            if (next is null || next.Length == 0 || StartsNewBlock(next)) {
+                var at = hasNewline ? newlineIndex + 1 : source.Length;
+                pieces.Add(new Piece("\u200B", at, false, true, at, false, at));
+            }
         }
 
-        return string.Join("\n", kept);
+        var render = new StringBuilder();
+        var mapped = new List<int>();
+        for (var p = 0; p < pieces.Count; p++) {
+            if (p > 0) {
+                var previous = pieces[p - 1];
+                var newlineAt = !previous.Synthetic && previous.HadNewline
+                    ? previous.NewlineIndex
+                    : pieces[p].Synthetic ? pieces[p].At : pieces[p].Start;
+                render.Append('\n');
+                mapped.Add(Original(newlineAt));
+            }
+
+            var piece = pieces[p];
+            if (piece.Synthetic) {
+                render.Append('\u200B');
+                mapped.Add(Original(piece.At));
+                continue;
+            }
+
+            if (piece.Prefix) {
+                render.Append('\u200B');
+                mapped.Add(Original(piece.Start));
+            }
+
+            for (var c = 0; c < piece.Text.Length; c++) {
+                render.Append(piece.Text[c]);
+                mapped.Add(Original(piece.Start + c));
+            }
+        }
+
+        origin = mapped.ToArray();
+        return render.ToString();
+
+        int Original(int index) {
+            if (index < 0)
+                return 0;
+            if (raw is null)
+                return Math.Min(index, markdown.Length);
+            if (index >= raw.Length)
+                return markdown.Length;
+            return raw[index];
+        }
     }
+
+    private readonly record struct Piece(string Text, int Start, bool Prefix, bool Synthetic, int At, bool HadNewline, int NewlineIndex);
 
     private static bool StartsNewBlock(string line) {
         var trimmed = line.TrimStart();

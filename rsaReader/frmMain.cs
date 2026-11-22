@@ -420,16 +420,46 @@ public partial class FormMain : Form {
     }
 
     private void btnBreak_Click(object sender, EventArgs e) {
-        RunButton(() => {
-            if (_mode == ViewMode.Edit) {
-                var start = rtbPreview.SelectionStart;
-                rtbPreview.SelectedText = "  \n";
-                rtbPreview.Select(start + 3, 0);
-                return;
-            }
+        if (_mode == ViewMode.Real) {
+            InsertPreviewBreak();
+            rtbPreview.Focus();
+            return;
+        }
 
-            rtbPreview.SelectedRtf = RichMarkdown.HardBreakRtf;
+        RunButton(() => {
+            var start = rtbPreview.SelectionStart;
+            rtbPreview.SelectedText = "  \n";
+            rtbPreview.Select(start + 3, 0);
         });
+    }
+
+    private void InsertPreviewBreak() {
+        if (_realEdited)
+            RichMarkdown.ToRtf(_markdown, _dark);
+        var text = rtbPreview.Text ?? "";
+        var start = Math.Clamp(rtbPreview.SelectionStart, 0, text.Length);
+        var end = Math.Clamp(start + Math.Max(0, rtbPreview.SelectionLength), start, text.Length);
+        var from = RichMarkdown.SourceIndex(text, start, _markdown.Length);
+        var to = end == start ? from : RichMarkdown.SourceIndex(text, end, _markdown.Length);
+        if (to < from)
+            (from, to) = (to, from);
+        from = Math.Clamp(from, 0, _markdown.Length);
+        to = Math.Clamp(to, from, _markdown.Length);
+        _markdown = _markdown.Remove(from, to - from).Insert(from, "  \n");
+        _realEdited = false;
+        _titleMarks.Clear();
+        ShowRich();
+        var caret = RichMarkdown.ControlCaret(rtbPreview.Text ?? "", from + 3);
+        _suppress = true;
+        try {
+            rtbPreview.Select(Math.Clamp(caret, 0, rtbPreview.TextLength), 0);
+        }
+        finally {
+            _suppress = false;
+        }
+
+        CollectTitleRules();
+        btnSave.Enabled = _markdown != _savedText;
     }
 
     private void RunButton(Action action) {
