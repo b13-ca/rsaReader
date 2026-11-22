@@ -29,6 +29,7 @@ internal static class MarkdownPreview {
                 background: #ffffff;
                 color-scheme: light;
             }
+            html, body { min-height: 100%; }
             body {
                 font-family: "Segoe UI", sans-serif;
                 font-size: 16px;
@@ -37,6 +38,11 @@ internal static class MarkdownPreview {
                 background: #ffffff;
                 margin: 0;
                 padding: 0 24px 40px;
+            }
+            body[contenteditable="true"] {
+                outline: none;
+                min-height: 100vh;
+                cursor: text;
             }
             body > :first-child { margin-top: 0; }
             h1, h2, h3, h4 { line-height: 1.25; margin: 1.1em 0 0.4em; }
@@ -56,6 +62,7 @@ internal static class MarkdownPreview {
             th, td { border: 1px solid #ccc; padding: 6px 10px; }
             img { max-width: 100%; }
             </style>
+            """ + RealEditor.Script + """
             </head>
             <body>
             """ + body + """
